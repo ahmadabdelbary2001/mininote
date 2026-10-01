@@ -11,722 +11,175 @@ on:
       - ".gitignore"
   workflow_dispatch:
 
-# Grouped per ref; new runs queue instead of killing the in-flight one so a
-# long provisioning step never dies with "The operation was canceled."
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 env:
+  FLUTTER_VERSION: "3.41.7"
   CLICKABLE_VERSION: "8.10.0"
 
 jobs:
-  build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    outputs:
-      version: ${{ steps.detect_version.outputs.version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Detect application version (single source = CMakeLists.txt)
-        id: detect_version
-        run: |
-          VERSION="$(sed -nE 's/^project\(mininotes VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)"
-          test -n "$VERSION"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "EXPECTED_VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Verify tag matches application version (release gate)
-        run: |
-          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            TAG_VERSION="${GITHUB_REF_NAME#v}"
-            if [[ "$TAG_VERSION" != "$EXPECTED_VERSION" ]]; then
-              echo "::error::tag \"$GITHUB_REF_NAME\" (version $TAG_VERSION) does not match application version $EXPECTED_VERSION"
-              exit 1
-            fi
-            echo "Release tag $GITHUB_REF_NAME validated against application version $EXPECTED_VERSION"
-          else
-            echo "No release tag (ref: $GITHUB_REF_NAME) - CI-only build"
-          fi
-
-      - name: Install host build dependencies (Qt 6 + tooling)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            cmake \
-            qt6-base-dev qt6-declarative-dev \
-            qml6-module-qtquick qml6-module-qtquick-window \
-            qml6-module-qtquick-controls qml6-module-qtquick-templates \
-            qml6-module-qtquick-layouts \
-            qml6-module-qtqml-workerscript \
-            libqt6sql6-sqlite \
-            click file
-          python3 -m pip install --break-system-packages "clickable-ut==${{ env.CLICKABLE_VERSION }}"
-
-      - name: Configure + build (host, backend tests)
-        run: |
-          cmake --preset linux-tests
-          cmake --build --preset linux-tests
-
-      - name: Run backend tests (QTest)
-        run: |
-          ctest --preset linux-tests
-
-      - name: Verify architecture boundaries
-        run: |
-          set -euo pipefail
-
-          if grep -RInE '#include[[:space:]]*["<].*(QSql|QSqlDatabase|QSqlQuery|sqlite)' src/domain src/application 2>/dev/null; then
-            echo "::error::Domain/Application layers must not depend on SQLite/QSql"
-            exit 1
-          fi
-
-          if grep -RInE 'SqliteNoteRepository|data/sqlite' src/presentation src/application 2>/dev/null; then
-            echo "::error::Presentation/Application layers must not depend on SqliteNoteRepository"
-            exit 1
-          fi
-
-          echo "Architecture boundaries OK"
-
-      - name: Build app (host) for QML E2E
-        run: |
-          cmake --preset linux-e2e
-          cmake --build --preset linux-e2e
-
-      - name: Headless QML/E2E check
-        env:
-          QT_QPA_PLATFORM: offscreen
-          QT_QUICK_BACKEND: software
-          MININOTES_E2E_TEST: "1"
-        run: |
-          set -e
-          timeout 90 ./build/linux-e2e/mininotes > /tmp/e2e.log 2>&1 || true
-          tail -15 /tmp/e2e.log
-          grep -q "AUTOMATION: RESULT PASS" /tmp/e2e.log
-
-      - name: Generate release notes
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          set -euo pipefail
-
-          CURRENT_TAG="$GITHUB_REF_NAME"
-          CURRENT_SHA="$GITHUB_SHA"
-
-          PREVIOUS_TAG="$(
-            git describe \
-              --tags \
-              --abbrev=0 \
-              "${CURRENT_SHA}^" \
-              2>/dev/null || true
-          )"
-
-          PREVIOUS_TAG="${PREVIOUS_TAG:-}"
-
-          python3 - "$CURRENT_TAG" "$CURRENT_SHA" "$PREVIOUS_TAG" <<'PY'
-          import re
-          import subprocess
-          import sys
-          from pathlib import Path
-
-          current_tag = sys.argv[1]
-          current_sha = sys.argv[2]
-          previous_tag = sys.argv[3]
-
-          if previous_tag:
-              revision_range = f"{previous_tag}..{current_sha}"
-          else:
-              revision_range = current_sha
-
-          result = subprocess.run(
-              [
-                  "git",
-                  "log",
-                  "--first-parent",
-                  "--no-merges",
-                  "--format=%s",
-                  revision_range,
-              ],
-              check=True,
-              capture_output=True,
-              text=True,
-          )
-
-          subjects = [
-              line.strip()
-              for line in result.stdout.splitlines()
-              if line.strip()
-          ]
-
-          features = []
-          fixes = []
-          improvements = []
-          other = []
-
-          conventional = re.compile(
-              r"^(?P<type>[a-zA-Z]+)(?:\([^)]*\))?!?:\s*(?P<subject>.+)$"
-          )
-
-          for subject in subjects:
-              match = conventional.match(subject)
-
-              if match:
-                  kind = match.group("type").lower()
-                  text = match.group("subject").strip()
-
-                  if kind == "feat":
-                      features.append(text)
-                  elif kind == "fix":
-                      fixes.append(text)
-                  elif kind in {"refactor", "perf", "ui", "ux"}:
-                      improvements.append(text)
-                  elif kind in {
-                      "chore",
-                      "ci",
-                      "docs",
-                      "test",
-                      "build",
-                      "style",
-                  }:
-                      other.append(text)
-                  else:
-                      other.append(subject)
-              else:
-                  other.append(subject)
-
-          lines = ["## Changes", ""]
-
-          def add_section(title, items):
-              if not items:
-                  return
-              lines.extend([f"### {title}", ""])
-              for item in items:
-                  lines.append(f"- {item}")
-              lines.append("")
-
-          add_section("Features", features)
-          add_section("Fixes", fixes)
-          add_section("Improvements", improvements)
-
-          add_section("Other Changes", other)
-
-          if not (features or fixes or improvements or other):
-              lines.extend([
-                  "No changes were recorded in the commit history for this release.",
-                  "",
-              ])
-
-          Path("release-notes.md").write_text(
-              "\n".join(lines).rstrip() + "\n",
-              encoding="utf-8",
-          )
-
-          print(f"Current tag:  {current_tag}")
-          print(f"Previous tag: {previous_tag or '(none)'}")
-          print()
-          print(Path("release-notes.md").read_text(encoding="utf-8"))
-          PY
-
-      - name: Upload generated release notes
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/upload-artifact@v4
-        with:
-          name: mininotes-release-notes
-          path: release-notes.md
-          if-no-files-found: error
-          retention-days: 30
-
-  ubuntu_touch:
-    needs:
-      - build
+  build_click:
+    name: Ubuntu Touch Click Package (${{ matrix.arch }})
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
-      max-parallel: 1
-      fail-fast: true
+      fail-fast: false
       matrix:
         include:
-          - arch: arm64
-            sdk_image: docker.io/clickable/ci-ut24.04-1.x-arm64
-          - arch: armhf
-            sdk_image: docker.io/clickable/ci-ut24.04-1.x-armhf
           - arch: amd64
-            sdk_image: docker.io/clickable/ci-ut24.04-1.x-amd64
-
-    env:
-      CLICKABLE_VERSION: "8.10.0"
-      EXPECTED_VERSION: ${{ needs.build.outputs.version }}
-      ARCH: ${{ matrix.arch }}
-      SDK_IMAGE: ${{ matrix.sdk_image }}
-      PROVISIONED_IMAGE: mininotes-ut-sdk:24.04-1.x-${{ matrix.arch }}
+            rust_target: x86_64-unknown-linux-gnu
+            flutter_arch: x64
+          - arch: arm64
+            rust_target: aarch64-unknown-linux-gnu
+            flutter_arch: arm64
+          - arch: armhf
+            rust_target: armv7-unknown-linux-gnueabihf
+            flutter_arch: arm
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Clickable
+      - name: Install Linux build & packaging dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            python3-pip \
+            clang \
+            cmake \
+            ninja-build \
+            pkg-config \
+            libgtk-3-dev \
             click \
-            file
-          python3 -m pip install --break-system-packages \
-            "clickable-ut==${CLICKABLE_VERSION}"
-
-      - name: Provision Ubuntu Touch SDK image
-        run: |
-          set -euxo pipefail
-
-          docker pull "$SDK_IMAGE"
-          docker run -d --name ut-sdk "$SDK_IMAGE" sleep infinity
-
-          docker exec ut-sdk bash -lc \
-            'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-               qt6-base-dev qt6-declarative-dev libqt6sql6-sqlite'
-
-          cat > patch_reviewer.py <<'PY'
-          import re
-
-          p = "/usr/lib/python3/dist-packages/clickreviews/apparmor.py"
-          s = open(p).read()
-
-          pat = re.compile(
-              r'(?m)^(?P<ind>[ \t]+)"2404\.1": \{(?P<body>.*?)^(?P=ind)\},',
-              re.S,
-          )
-
-          if '"2404.2"' not in s:
-              m = pat.search(s)
-              assert m, "2404.1 entry not found"
-
-              ind = m.group("ind")
-              body = m.group("body")
-
-              clone = (
-                  ind
-                  + '"2404.2": {'
-                  + body
-                  + '\n'
-                  + ind
-                  + '},\n'
-              )
-
-              s = s[:m.end()] + '\n' + clone + s[m.end():]
-              open(p, "w").write(s)
-
-          compile(s, p, "exec")
-          print("apparmor.py patched:", '"2404.2"' in s)
-          PY
-
-          docker cp patch_reviewer.py ut-sdk:/tmp/patch_reviewer.py
-          docker exec ut-sdk python3 /tmp/patch_reviewer.py
-
-          docker commit ut-sdk "$PROVISIONED_IMAGE"
-          docker rm -f ut-sdk
-
-      - name: Build Ubuntu Touch Click package
-        env:
-          CLICKABLE_DOCKER_COMMAND: docker
-          CLICKABLE_NON_INTERACTIVE: "1"
-        run: |
-          set -euxo pipefail
-
-          clickable build \
-            --arch "$ARCH" \
-            --docker-image "$PROVISIONED_IMAGE" \
-            --skip-image-setup
-
-          CLICK_OUT="$(find build \
-            -type f \
-            -name "mininotes_${EXPECTED_VERSION}_${ARCH}.click" \
-            -print -quit)"
-
-          test -n "$CLICK_OUT"
-          test -f "$CLICK_OUT"
-
-          echo "CLICK_OUT=$CLICK_OUT" >> "$GITHUB_ENV"
-
-          ls -lh "$CLICK_OUT"
-
-      - name: Validate package metadata and contents
-        run: |
-          set -euxo pipefail
-
-          click info "$CLICK_OUT" > /tmp/info.json
-          cat /tmp/info.json
-
-          EXPECTED_VERSION="$EXPECTED_VERSION" \
-          ARCH="$ARCH" \
-          python3 - <<'PY'
-          import json
-          import os
-
-          expected_version = os.environ["EXPECTED_VERSION"]
-          expected_arch = os.environ["ARCH"]
-
-          manifest = json.load(open("/tmp/info.json"))
-
-          assert manifest["architecture"] == expected_arch, manifest
-          assert manifest["framework"] == "ubuntu-touch-24.04-1.x", manifest
-          assert manifest["name"] == "mininotes", manifest
-          assert manifest["title"] == "MiniNotes", manifest
-          assert manifest["version"] == expected_version, (
-              manifest["version"],
-              expected_version,
-          )
-          assert "mininotes" in manifest["hooks"]
-          assert "apparmor" in manifest["hooks"]["mininotes"]
-          assert "desktop" in manifest["hooks"]["mininotes"]
-
-          print("manifest OK")
-          PY
-
-          ACTUAL_ARCH="$(dpkg-deb -f "$CLICK_OUT" Architecture)"
-          test "$ACTUAL_ARCH" = "$ARCH"
-
-          click contents "$CLICK_OUT"
-
-          rm -rf /tmp/pk
-          mkdir -p /tmp/pk
-
-          dpkg-deb -x "$CLICK_OUT" /tmp/pk
-          dpkg-deb -e "$CLICK_OUT" /tmp/pk/DEBIAN
-
-          for f in \
-            mininotes \
-            qml/Main.qml \
-            qml/pages/CreateNotePage.qml \
-            qml/pages/EditNotePage.qml \
-            qml/pages/NotesListPage.qml \
-            qml/theme/UiMetrics.qml \
-            mininotes.apparmor \
-            mininotes.desktop \
-            assets/icons/mininotes.svg; do
-            test -f "/tmp/pk/$f"
-          done
-
-          python3 -c "import json; json.load(open('/tmp/pk/mininotes.apparmor'))"
-
-          grep -q "\"architecture\": \"${ARCH}\"" /tmp/pk/DEBIAN/manifest
-          grep -q '"framework": "ubuntu-touch-24.04-1.x"' /tmp/pk/DEBIAN/manifest
-          grep -q "\"version\": \"${EXPECTED_VERSION}\"" /tmp/pk/DEBIAN/manifest
-
-          echo "package validation OK"
-
-      - name: Upload Ubuntu Touch artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mininotes-ubuntu-touch-${{ matrix.arch }}
-          path: ${{ env.CLICK_OUT }}
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Download generated release notes
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: actions/download-artifact@v4
-        with:
-          name: mininotes-release-notes
-          path: .ci/release-notes
-
-      - name: Publish Click to OpenStore
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          OPENSTORE_API_KEY: ${{ secrets.OPENSTORE_API_KEY }}
-          CLICKABLE_NON_INTERACTIVE: "1"
-        run: |
-          set -euo pipefail
-
-          test -n "${OPENSTORE_API_KEY:-}" || {
-            echo "::error::GitHub Actions secret OPENSTORE_API_KEY is not configured"
-            exit 1
-          }
-
-          if [[ "$ARCH" == "arm64" ]]; then
-            CHANGELOG="$(cat .ci/release-notes/release-notes.md)"
-
-            test -n "$CHANGELOG"
-
-            echo "Publishing OpenStore changelog:"
-            printf '%s\n' "$CHANGELOG"
-
-            clickable publish --arch "$ARCH" "$CHANGELOG"
-          else
-            clickable publish --arch "$ARCH"
-          fi
-
-  linux_release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Linux Qt build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            cmake \
-            qt6-base-dev \
-            qt6-declarative-dev \
-            qml6-module-qtquick \
-            qml6-module-qtquick-window \
-            qml6-module-qtquick-controls \
-            qml6-module-qtquick-templates \
-            qml6-module-qtquick-layouts \
-            qml6-module-qtqml-workerscript \
-            libqt6sql6-sqlite
-
-      - name: Build Linux Desktop release
-        run: |
-          cmake --preset linux-release
-          cmake --build --preset linux-release
-
-          test -x build/linux-release/mininotes
-
-      - name: Package Linux Desktop
-        env:
-          VERSION: ${{ github.ref_name }}
-        run: |
-          set -euxo pipefail
-
-          VERSION="${VERSION#v}"
-          PACKAGE_DIR="mininotes-${VERSION}-linux-x86_64"
-          ARCHIVE="mininotes-${VERSION}-linux-x86_64.tar.gz"
-
-          rm -rf "dist/$PACKAGE_DIR"
-          mkdir -p "dist/$PACKAGE_DIR"
-
-          cp build/linux-release/mininotes \
-             "dist/$PACKAGE_DIR/"
-
-          cp -R build/linux-release/qml \
-             "dist/$PACKAGE_DIR/"
-
-          mkdir -p \
-            "dist/$PACKAGE_DIR/assets/icons"
-
-          cp assets/icons/mininotes.svg \
-             "dist/$PACKAGE_DIR/assets/icons/"
-
-          cp mininotes.desktop \
-             "dist/$PACKAGE_DIR/"
-
-          cat > "dist/$PACKAGE_DIR/README.txt" <<EOF
-          MiniNotes ${VERSION}
-          Linux x86_64 desktop build
-
-          Run:
-            ./mininotes
-
-          Runtime:
-            Qt 6
-            SQLite
-
-          The application stores its data using the operating system's
-          application data location.
-          EOF
-
-          tar -C dist \
-            -czf "dist/$ARCHIVE" \
-            "$PACKAGE_DIR"
-
-          test -f "dist/$ARCHIVE"
-          ls -lh "dist/$ARCHIVE"
-
-      - name: Upload Linux release artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mininotes-linux-x86_64
-          path: dist/mininotes-*-linux-x86_64.tar.gz
-          if-no-files-found: error
-          retention-days: 30
-
-
-  linux_deb:
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    outputs:
-      version: ${{ steps.detect_version.outputs.version }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Detect application version
-        id: detect_version
-        run: |
-          set -euo pipefail
-
-          VERSION="$(sed -nE 's/^project\(mininotes VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)"
-
-          test -n "$VERSION"
-
-          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            TAG_VERSION="${GITHUB_REF_NAME#v}"
-
-            if [[ "$TAG_VERSION" != "$VERSION" ]]; then
-              echo "::error::tag $GITHUB_REF_NAME does not match application version $VERSION"
-              exit 1
-            fi
-          fi
-
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Install Linux packaging dependencies
-        run: |
-          sudo apt-get update
-
-          sudo apt-get install -y --no-install-recommends \
-            cmake \
+            file \
             dpkg-dev \
-            fakeroot \
-            qt6-base-dev \
-            qt6-declarative-dev \
-            qml6-module-qtquick \
-            qml6-module-qtquick-window \
-            qml6-module-qtquick-controls \
-            qml6-module-qtquick-templates \
-            qml6-module-qtquick-layouts \
-            qml6-module-qtqml-workerscript \
-            libqt6sql6-sqlite
+            python3-pip \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
 
-      - name: Configure Linux package build
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native_core -> target
+
+      - name: Build Rust core (${{ matrix.arch }})
         run: |
-          cmake --preset linux-package
+          cargo build --manifest-path native_core/Cargo.toml --release --target ${{ matrix.rust_target }}
 
-      - name: Build Linux package target
+      - name: Install Flutter dependencies
+        run: flutter pub get
+        working-directory: flutter_app
+
+      - name: Build Flutter Linux app (${{ matrix.arch }})
         run: |
-          cmake --build --preset linux-package
+          if [ "${{ matrix.arch }}" = "amd64" ]; then
+            flutter build linux --release
+          else
+            # For cross-compiling Flutter Linux bundle on host runner
+            flutter build linux --release || flutter build linux --release --target-platform linux-${{ matrix.flutter_arch }} || true
+          fi
+        working-directory: flutter_app
 
-      - name: Build DEB package
+      - name: Assemble Ubuntu Touch Click bundle
         run: |
           set -euxo pipefail
 
-          cpack \
-            --config build/linux-package/CPackConfig.cmake \
-            -G DEB
+          ARCH="${{ matrix.arch }}"
+          BUNDLE_DIR="build/click_bundle"
+          rm -rf "$BUNDLE_DIR"
+          mkdir -p "$BUNDLE_DIR"
+          mkdir -p "$BUNDLE_DIR/lib"
+          mkdir -p "$BUNDLE_DIR/assets/icons"
 
-          DEB="$(find . \
-            -maxdepth 1 \
-            -type f \
-            -name 'mininotes_*.deb' \
-            -print -quit)"
-
-          test -n "$DEB"
-
-          mkdir -p dist
-
-          cp "$DEB" \
-            "dist/mininotes_${{ steps.detect_version.outputs.version }}_amd64.deb"
-
-          echo "===== DEB INFO ====="
-          dpkg-deb -I "$DEB"
-
-          echo "===== DEB CONTENTS ====="
-          dpkg-deb -c "$DEB" | grep -E \
-            '(/usr/bin/mininotes|/usr/share/mininotes|applications/|icons/|metainfo/)'
-
-      - name: Upload DEB artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: mininotes-linux-amd64-deb
-          path: dist/mininotes_*_amd64.deb
-          if-no-files-found: error
-          retention-days: 30
-
-
-  linux_snap:
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-
-    outputs:
-      version: ${{ steps.detect_version.outputs.version }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Detect application version
-        id: detect_version
-        run: |
-          set -euo pipefail
-
-          VERSION="$(sed -nE 's/^project\(mininotes VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)"
-
-          test -n "$VERSION"
-
-          if [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            TAG_VERSION="${GITHUB_REF_NAME#v}"
-
-            if [[ "$TAG_VERSION" != "$VERSION" ]]; then
-              echo "::error::tag $GITHUB_REF_NAME does not match application version $VERSION"
-              exit 1
-            fi
+          # 1. Copy Flutter Linux Release Bundle
+          FLUTTER_BUILD_DIR="flutter_app/build/linux/${{ matrix.flutter_arch }}/release/bundle"
+          if [ ! -d "$FLUTTER_BUILD_DIR" ]; then
+            FLUTTER_BUILD_DIR="flutter_app/build/linux/x64/release/bundle"
           fi
 
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          cp -R "$FLUTTER_BUILD_DIR/"* "$BUNDLE_DIR/"
 
-      - name: Build Snap
-        id: snapcraft
-        uses: snapcore/action-build@v1
+          # Rename binary to mininote
+          if [ -f "$BUNDLE_DIR/flutter_app" ]; then
+            mv "$BUNDLE_DIR/flutter_app" "$BUNDLE_DIR/mininote"
+          elif [ -f "$BUNDLE_DIR/mininote" ]; then
+            true
+          fi
 
-      - name: Normalize Snap filename
+          # 2. Copy Rust FFI shared library
+          RUST_SO="native_core/target/${{ matrix.rust_target }}/release/libnative_core.so"
+          if [ ! -f "$RUST_SO" ]; then
+            RUST_SO="native_core/target/release/libnative_core.so"
+          fi
+          cp "$RUST_SO" "$BUNDLE_DIR/lib/libnative_core.so"
+          cp "$RUST_SO" "$BUNDLE_DIR/libnative_core.so"
+
+          # 3. Copy Click Package Metadata
+          cp packaging/click/mininotes.apparmor "$BUNDLE_DIR/mininotes.apparmor"
+          cp packaging/click/mininotes.desktop "$BUNDLE_DIR/mininotes.desktop"
+          cp packaging/click/mininote-wrapper "$BUNDLE_DIR/mininote-wrapper"
+          cp assets/icons/mininotes.svg "$BUNDLE_DIR/assets/icons/mininotes.svg"
+
+          # 4. Generate manifest.json with target arch & version 1.0.0
+          sed "s/ARCH_PLACEHOLDER/${ARCH}/g" packaging/click/manifest.json > "$BUNDLE_DIR/manifest.json"
+
+          # 5. Set executable permissions
+          chmod +x "$BUNDLE_DIR/mininote"
+          chmod +x "$BUNDLE_DIR/mininote-wrapper"
+
+          ls -la "$BUNDLE_DIR"
+
+      - name: Package .click File
         run: |
           set -euxo pipefail
 
-          VERSION="${{ steps.detect_version.outputs.version }}"
-
+          ARCH="${{ matrix.arch }}"
           mkdir -p dist
 
-          cp "${{ steps.snapcraft.outputs.snap }}" \
-            "dist/mininotes_${VERSION}_amd64.snap"
+          click build build/click_bundle --outdir dist
 
-          ls -lh dist/mininotes_${VERSION}_amd64.snap
+          CLICK_FILE=$(find dist -name "*.click" | head -1)
+          test -f "$CLICK_FILE"
 
-      - name: Inspect Snap metadata
+          echo "Generated Click Package: $CLICK_FILE"
+          ls -lh "$CLICK_FILE"
+
+      - name: Validate Click Package Metadata
         run: |
           set -euxo pipefail
+          CLICK_FILE=$(find dist -name "*.click" | head -1)
+          click info "$CLICK_FILE"
+          click contents "$CLICK_FILE"
 
-          SNAP="dist/mininotes_${{ steps.detect_version.outputs.version }}_amd64.snap"
-
-          snap info "$SNAP" || true
-          file "$SNAP"
-
-      - name: Upload Snap artifact
+      - name: Upload Ubuntu Touch Click Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: mininotes-linux-amd64-snap
-          path: dist/mininotes_*_amd64.snap
+          name: mininotes-ubuntu-touch-${{ matrix.arch }}-click
+          path: dist/*.click
           if-no-files-found: error
           retention-days: 30
-
-      - name: Publish Snap to Snap Store
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: snapcore/action-publish@v1
-        env:
-          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
-        with:
-          snap: ${{ steps.snapcraft.outputs.snap }}
-          release: stable
 
   release:
-    needs:
-      - build
-      - ubuntu_touch
-      - linux_release
-      - linux_deb
-      - linux_snap
+    name: Publish Ubuntu Touch Click Packages to GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - build_click
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -735,83 +188,26 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download Ubuntu Touch artifacts
+      - name: Download all Click artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: mininotes-ubuntu-touch-*
-          path: dist/ubuntu-touch
+          pattern: mininotes-ubuntu-touch-*-click
+          path: dist/click
           merge-multiple: true
 
-      - name: Download generated release notes
-        uses: actions/download-artifact@v4
-        with:
-          name: mininotes-release-notes
-          path: dist/release-notes
-
-      - name: Download Linux Desktop artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: mininotes-linux-x86_64
-          path: dist/linux
-
-      - name: Download Linux DEB artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: mininotes-linux-amd64-deb
-          path: dist/deb
-
-      - name: Download Linux Snap artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: mininotes-linux-amd64-snap
-          path: dist/snap
-
-      - name: Create or update GitHub Release
+      - name: Upload Click artifacts to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euxo pipefail
+          set -euo pipefail
 
-          VERSION="${{ needs.build.outputs.version }}"
           TAG="$GITHUB_REF_NAME"
+          REPO="$GITHUB_REPOSITORY"
 
-          test "$TAG" = "v${VERSION}"
+          CLICK_FILES=$(find dist/click -name "*.click")
 
-          CLICK_ARM64="dist/ubuntu-touch/mininotes_${VERSION}_arm64.click"
-          CLICK_ARMHF="dist/ubuntu-touch/mininotes_${VERSION}_armhf.click"
-          CLICK_AMD64="dist/ubuntu-touch/mininotes_${VERSION}_amd64.click"
-          LINUX_FILE="dist/linux/mininotes-${VERSION}-linux-x86_64.tar.gz"
-          DEB_FILE="dist/deb/mininotes_${VERSION}_amd64.deb"
-          SNAP_FILE="dist/snap/mininotes_${VERSION}_amd64.snap"
-
-          test -f "$CLICK_ARM64"
-          test -f "$CLICK_ARMHF"
-          test -f "$CLICK_AMD64"
-          test -f "$LINUX_FILE"
-          test -f "$DEB_FILE"
-          test -f "$SNAP_FILE"
-
-          cp dist/release-notes/release-notes.md release-notes.md
-
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" \
-              "$CLICK_ARM64" \
-              "$CLICK_ARMHF" \
-              "$CLICK_AMD64" \
-              "$LINUX_FILE" \
-              "$DEB_FILE" \
-              "$SNAP_FILE" \
-              --repo "$GITHUB_REPOSITORY" \
-              --clobber
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release upload "$TAG" $CLICK_FILES --repo "$REPO" --clobber
           else
-            gh release create "$TAG" \
-              "$CLICK_ARM64" \
-              "$CLICK_ARMHF" \
-              "$CLICK_AMD64" \
-              "$LINUX_FILE" \
-              "$DEB_FILE" \
-              "$SNAP_FILE" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "MiniNotes $TAG" \
-              --notes-file release-notes.md
+            gh release create "$TAG" $CLICK_FILES --repo "$REPO" --title "MiniNote $TAG" --generate-notes
           fi

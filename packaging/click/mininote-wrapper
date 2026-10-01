@@ -1,0 +1,6 @@
+#!/bin/bash
+HERE="$(dirname "$(readlink -f "${0}")")"
+export LD_LIBRARY_PATH="${HERE}/lib:${HERE}:${LD_LIBRARY_PATH}"
+export GDK_BACKEND="wayland,x11"
+export PATH="${HERE}:${PATH}"
+exec "${HERE}/mininote" "$@"

@@ -1,0 +1,15 @@
+{
+    "name": "mininotes",
+    "description": "MiniNote - Fast offline notes app powered by Flutter + Rust FFI for Ubuntu Touch",
+    "architecture": "ARCH_PLACEHOLDER",
+    "title": "MiniNote",
+    "hooks": {
+        "mininotes": {
+            "apparmor": "mininotes.apparmor",
+            "desktop": "mininotes.desktop"
+        }
+    },
+    "version": "1.0.0",
+    "maintainer": "Ahmad Abdelbary <ahmadabdelbary2001@github.com>",
+    "framework": "ubuntu-touch-24.04-1.x"
+}
