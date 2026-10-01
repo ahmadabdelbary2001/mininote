@@ -1,8 +1,4 @@
 clickable_minimum_required: 8.8.0
-builder: cmake
-kill: mininotes
+builder: custom
+kill: mininote
 framework: ubuntu-touch-24.04-1.x
-dependencies_target:
-  - qtbase5-dev
-  - qtdeclarative5-dev
-  - libqt5sql5-sqlite

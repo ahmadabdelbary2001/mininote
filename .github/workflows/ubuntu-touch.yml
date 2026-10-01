@@ -186,7 +186,7 @@ jobs:
           retention-days: 30
 
   release:
-    name: Publish Ubuntu Touch Click Packages to GitHub Release
+    name: Publish Ubuntu Touch Click Packages to GitHub Release & OpenStore
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
       - build_click
@@ -221,3 +221,24 @@ jobs:
           else
             gh release create "$TAG" $CLICK_FILES --repo "$REPO" --title "MiniNote $TAG" --generate-notes
           fi
+
+      - name: Publish Click Packages to OpenStore
+        env:
+          OPENSTORE_API_KEY: ${{ secrets.OPENSTORE_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${OPENSTORE_API_KEY:-}" ]; then
+            echo "OPENSTORE_API_KEY secret is not set, skipping OpenStore publication."
+            exit 0
+          fi
+
+          for CLICK_FILE in dist/click/*.click; do
+            if [ -f "$CLICK_FILE" ]; then
+              echo "Uploading $CLICK_FILE to OpenStore..."
+              curl -f -sS -X POST \
+                -H "X-Api-Key: ${OPENSTORE_API_KEY}" \
+                -F "file=@${CLICK_FILE}" \
+                https://open-store.io/api/v4/submit || echo "OpenStore submission finished for $CLICK_FILE"
+            fi
+          done
