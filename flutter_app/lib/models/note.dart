@@ -7,6 +7,7 @@ class Note {
     required this.updatedAt,
   });
 
+  /// Database row id – always present for persisted notes.
   final int? id;
   final String title;
   final String content;
@@ -22,4 +23,24 @@ class Note {
       updatedAt: json['updated_at'] as String? ?? '',
     );
   }
+
+  Note copyWith({
+    int? id,
+    String? title,
+    String? content,
+    String? createdAt,
+    String? updatedAt,
+  }) {
+    return Note(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      content: content ?? this.content,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() =>
+      'Note(id: $id, title: $title, updatedAt: $updatedAt)';
 }

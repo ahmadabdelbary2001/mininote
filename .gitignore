@@ -1,44 +1,54 @@
-# Build directories
+# ── Build & compiled ─────────────────────────────────────────────────────────
 build/
 build-*/
 CMakeFiles/
 CMakeCache.txt
 Testing/
 compile_commands.json
-
-# Compiled artifacts
 *.o
 *.a
 *.so
 *.so.*
 *.exe
 
-# Package artifacts (e.g. locally downloaded cross-toolchain .debs)
+# ── Package artifacts ─────────────────────────────────────────────────────────
 *.deb
 *.rpm
+dist/
 
-# Toolchains and caches
+# ── Toolchains & caches ───────────────────────────────────────────────────────
 toolchain/
 .cache/
 tmp/
 cache/
 
-# QML/IDE cruft
+# ── QML / IDE cruft ──────────────────────────────────────────────────────────
 .qmlc/
 *.qmlc
 .qrc
 .vscode/
 .clickable/
 
-# Editor
+# ── Editor ───────────────────────────────────────────────────────────────────
 .idea/
 *.swp
 *~
-# Windows deployment artifacts
-dist/
 
-# Local developer CMake presets
+# ── Local developer CMake presets ────────────────────────────────────────────
 CMakeUserPresets.json
 
-# target-specific build directories
+# ── Rust ─────────────────────────────────────────────────────────────────────
 native_core/target/
+
+# ── Flutter / Dart ───────────────────────────────────────────────────────────
+flutter_app/.dart_tool/
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+flutter_app/build/
+flutter_app/*.log
+flutter_app/.packages
+flutter_app/pubspec.lock
+flutter_app/.idea/
+
+# Generated native JNI libs (built in CI)
+flutter_app/android/app/src/main/jniLibs/

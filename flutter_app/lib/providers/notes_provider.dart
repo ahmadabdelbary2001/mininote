@@ -4,11 +4,12 @@ import '../services/note_service.dart';
 
 class NotesProvider extends ChangeNotifier {
   final NoteService _service = NoteService();
+
   List<Note> _notes = [];
   bool _isLoading = true;
   String? _errorMessage;
 
-  List<Note> get notes => _notes;
+  List<Note> get notes => List.unmodifiable(_notes);
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
 
@@ -18,9 +19,9 @@ class NotesProvider extends ChangeNotifier {
     notifyListeners();
     try {
       _notes = await _service.getNotes();
-    } catch (e) {
+    } catch (e, st) {
       _errorMessage = e.toString();
-      debugPrint('Error loading notes: $e');
+      debugPrint('Error loading notes: $e\n$st');
     } finally {
       _isLoading = false;
       notifyListeners();

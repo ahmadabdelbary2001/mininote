@@ -56,19 +56,29 @@ class NativeCoreBindings {
 
     final executableDir = File(Platform.resolvedExecutable).parent.path;
     if (Platform.isWindows) {
-      return DynamicLibrary.open(
-        '$executableDir${Platform.pathSeparator}native_core.dll',
-      );
+      final dllPath = '$executableDir${Platform.pathSeparator}native_core.dll';
+      if (File(dllPath).existsSync()) {
+        return DynamicLibrary.open(dllPath);
+      }
+      return DynamicLibrary.open('native_core.dll');
     }
     if (Platform.isLinux) {
-      return DynamicLibrary.open(
-        '$executableDir${Platform.pathSeparator}libnative_core.so',
-      );
+      final bundledLib = '$executableDir${Platform.pathSeparator}lib${Platform.pathSeparator}libnative_core.so';
+      if (File(bundledLib).existsSync()) {
+        return DynamicLibrary.open(bundledLib);
+      }
+      final rootLib = '$executableDir${Platform.pathSeparator}libnative_core.so';
+      if (File(rootLib).existsSync()) {
+        return DynamicLibrary.open(rootLib);
+      }
+      return DynamicLibrary.open('libnative_core.so');
     }
     if (Platform.isMacOS) {
-      return DynamicLibrary.open(
-        '$executableDir${Platform.pathSeparator}libnative_core.dylib',
-      );
+      final dylibPath = '$executableDir${Platform.pathSeparator}libnative_core.dylib';
+      if (File(dylibPath).existsSync()) {
+        return DynamicLibrary.open(dylibPath);
+      }
+      return DynamicLibrary.open('libnative_core.dylib');
     }
     throw UnsupportedError('Unsupported platform for native_core');
   }

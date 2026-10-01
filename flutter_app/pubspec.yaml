@@ -1,5 +1,5 @@
-name: flutter_app
-description: MiniNote Cross-platform app powered by Rust Core.
+name: mininote
+description: MiniNote – Cross-platform notes app powered by Flutter + Rust (FFI).
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -13,6 +13,7 @@ dependencies:
   path_provider: ^2.1.2
   provider: ^6.1.2
   cupertino_icons: ^1.0.6
+  intl: ^0.20.2
 
 dev_dependencies:
   flutter_test:

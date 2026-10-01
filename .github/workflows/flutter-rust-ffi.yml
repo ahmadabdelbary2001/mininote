@@ -1,8 +1,9 @@
-name: flutter-rust-ffi
+﻿name: flutter-rust-ffi
 
 on:
   push:
     branches: ["**"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
     paths:
       - ".github/workflows/flutter-rust-ffi.yml"
       - "flutter_app/**"
@@ -26,7 +27,7 @@ env:
 
 jobs:
   desktop:
-    name: Desktop · ${{ matrix.label }}
+    name: Desktop Â· ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -271,3 +272,67 @@ jobs:
           path: dist/mininote-ios-unsigned.zip
           if-no-files-found: error
           retention-days: 30
+
+  release:
+    name: Publish Flutter artifacts to GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - desktop
+      - android
+      - ios
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mininote-linux-x64
+          path: dist/linux
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mininote-windows-x64
+          path: dist/windows
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mininote-macos
+          path: dist/macos
+
+      - name: Download Android artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mininote-android-apk
+          path: dist/android
+
+      - name: Upload all Flutter artifacts to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          TAG="$GITHUB_REF_NAME"
+          REPO="$GITHUB_REPOSITORY"
+
+          LINUX_FILE=$(find dist/linux -name "*.tar.gz" | head -1)
+          WINDOWS_FILE=$(find dist/windows -name "*.zip" | head -1)
+          MACOS_FILE=$(find dist/macos -name "*.zip" | head -1)
+          ANDROID_FILE=$(find dist/android -name "*.apk" | head -1)
+
+          FILES=""
+          [ -f "$LINUX_FILE"   ] && FILES="$FILES $LINUX_FILE"
+          [ -f "$WINDOWS_FILE" ] && FILES="$FILES $WINDOWS_FILE"
+          [ -f "$MACOS_FILE"   ] && FILES="$FILES $MACOS_FILE"
+          [ -f "$ANDROID_FILE" ] && FILES="$FILES $ANDROID_FILE"
+
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            # Release already exists (created by ubuntu-touch workflow) – just upload
+            gh release upload "$TAG" $FILES --repo "$REPO" --clobber
+          else
+            gh release create "$TAG" $FILES --repo "$REPO" --title "MiniNote $TAG" --generate-notes
+          fi

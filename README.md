@@ -26,14 +26,14 @@ Cargo    : 1.93.1
 
 MiniNotes is a small offline-first notes application built with **C++17, QML, Qt and SQLite**. It is designed as a native Qt application with a layered architecture, local persistence, touch-friendly UI, and reproducible builds for Ubuntu Touch and Linux.
 
-> **Development version: 0.2.11**
+> **Development version: 1.0.0**
 > **Status: Experimental / Development**
 
 ## Status
 
 | Area                       | Current state                                |
 | -------------------------- | -------------------------------------------- |
-| Application version        | **0.2.11**                                    |
+| Application version        | **1.0.0**                                    |
 | Ubuntu Touch framework     | `ubuntu-touch-24.04-1.x`                     |
 | Ubuntu Touch Click targets | `arm64`, `armhf`, `amd64`                    |
 | Linux desktop              | x86_64                                       |
@@ -670,7 +670,7 @@ vMAJOR.MINOR.PATCH
 Example:
 
 ```text
-v0.2.11
+v1.0.0
 ```
 
 The application version is taken from:
@@ -684,8 +684,8 @@ The release tag must match the application version.
 For example:
 
 ```text
-CMakeLists.txt → 0.2.11
-Git tag        → v0.2.11
+CMakeLists.txt → 1.0.0
+Git tag        → v1.0.0
 ```
 
 A mismatch stops the release pipeline.
@@ -772,7 +772,7 @@ The normal release flow is:
 14. Maintain Flatpak / Flathub separately
 ```
 
-For the current Flatpak work, `v0.2.11` is the first planned release version containing the Flatpak packaging and CI integration.
+For the current Flatpak work, `v1.0.0` is the first planned release version containing the Flatpak packaging and CI integration.
 
 ## Data and Persistence
 
