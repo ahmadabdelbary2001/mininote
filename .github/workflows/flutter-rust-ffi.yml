@@ -1,0 +1,254 @@
+name: flutter-rust-ffi
+
+on:
+  push:
+    branches: ["**"]
+    paths:
+      - ".github/workflows/flutter-rust-ffi.yml"
+      - "flutter_app/**"
+      - "native_core/**"
+  pull_request:
+    paths:
+      - ".github/workflows/flutter-rust-ffi.yml"
+      - "flutter_app/**"
+      - "native_core/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.41.7"
+
+jobs:
+  desktop:
+    name: Desktop · ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            label: Linux
+            flutter_target: linux
+            artifact_name: mininote-linux-x64
+            artifact_path: dist/mininote-linux-x64.tar.gz
+          - os: windows-2022
+            label: Windows
+            flutter_target: windows
+            artifact_name: mininote-windows-x64
+            artifact_path: dist/mininote-windows-x64.zip
+          - os: macos-14
+            label: macOS
+            flutter_target: macos
+            artifact_name: mininote-macos
+            artifact_path: dist/mininote-macos.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native_core -> target
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+        working-directory: flutter_app
+
+      - name: Build Rust core
+        run: cargo build --manifest-path native_core/Cargo.toml --release
+
+      - name: Build Flutter desktop app
+        run: flutter build ${{ matrix.flutter_target }} --release
+        working-directory: flutter_app
+
+      - name: Package Linux bundle
+        if: matrix.flutter_target == 'linux'
+        run: |
+          set -euo pipefail
+
+          cp native_core/target/release/libnative_core.so \
+            flutter_app/build/linux/x64/release/bundle/libnative_core.so
+
+          mkdir -p dist
+
+          tar -C flutter_app/build/linux/x64/release \
+            -czf dist/mininote-linux-x64.tar.gz \
+            bundle
+
+          test -f dist/mininote-linux-x64.tar.gz
+
+      - name: Package Windows bundle
+        if: matrix.flutter_target == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "native_core/target/release/native_core.dll" `
+            "flutter_app/build/windows/x64/runner/Release/native_core.dll" -Force
+          if (Test-Path "dist/mininote-windows-x64.zip") {
+            Remove-Item "dist/mininote-windows-x64.zip" -Force
+          }
+          Compress-Archive `
+            -Path "flutter_app/build/windows/x64/runner/Release/*" `
+            -DestinationPath "dist/mininote-windows-x64.zip"
+
+      - name: Package macOS bundle
+        if: matrix.flutter_target == 'macos'
+        run: |
+          set -euo pipefail
+
+          APP_DIR="flutter_app/build/macos/Build/Products/Release/flutter_app.app"
+          cp native_core/target/release/libnative_core.dylib \
+            "$APP_DIR/Contents/MacOS/libnative_core.dylib"
+
+          mkdir -p dist
+
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$APP_DIR" \
+            dist/mininote-macos.zip
+
+          test -f dist/mininote-macos.zip
+
+      - name: Upload desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+          retention-days: 30
+
+  android:
+    name: Android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager "ndk;27.0.12077973"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native_core -> target
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+        working-directory: flutter_app
+
+      - name: Build Rust Android libraries
+        run: |
+          rm -rf flutter_app/android/app/src/main/jniLibs
+          mkdir -p flutter_app/android/app/src/main/jniLibs
+
+          cargo ndk \
+            -t armeabi-v7a \
+            -t arm64-v8a \
+            -t x86_64 \
+            -o flutter_app/android/app/src/main/jniLibs \
+            build \
+            --manifest-path native_core/Cargo.toml \
+            --release
+
+      - name: Build Android APK
+        run: flutter build apk --release
+        working-directory: flutter_app
+
+      - name: Upload Android artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mininote-android-apk
+          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  ios:
+    name: iOS
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+        working-directory: flutter_app
+
+      - name: Build iOS app without codesign
+        run: flutter build ios --release --no-codesign
+        working-directory: flutter_app
+
+      - name: Package iOS app bundle
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+
+          ditto -c -k --sequesterRsrc --keepParent \
+            flutter_app/build/ios/iphoneos/Runner.app \
+            dist/mininote-ios-unsigned.zip
+
+          test -f dist/mininote-ios-unsigned.zip
+
+      - name: Upload iOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mininote-ios-unsigned
+          path: dist/mininote-ios-unsigned.zip
+          if-no-files-found: error
+          retention-days: 30

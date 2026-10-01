@@ -1,5 +1,29 @@
 # MiniNotes
 
+## Migration Status
+
+This repository currently contains two application paths:
+
+1. Legacy desktop/mobile path based on `Qt/QML + C++`.
+2. New cross-platform path based on `Flutter + Rust + FFI`.
+
+The new path lives in:
+
+```text
+flutter_app/   -> Flutter UI
+native_core/   -> Rust core + SQLite + C ABI
+```
+
+On the current machine, the detected environment is:
+
+```text
+OS       : Windows
+Flutter  : 3.41.7
+Dart     : 3.11.5
+Rust     : 1.93.1
+Cargo    : 1.93.1
+```
+
 MiniNotes is a small offline-first notes application built with **C++17, QML, Qt and SQLite**. It is designed as a native Qt application with a layered architecture, local persistence, touch-friendly UI, and reproducible builds for Ubuntu Touch and Linux.
 
 > **Development version: 0.2.11**
