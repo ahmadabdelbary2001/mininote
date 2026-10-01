@@ -145,7 +145,7 @@ jobs:
           cp packaging/click/mininote-wrapper "$BUNDLE_DIR/mininote-wrapper"
           cp assets/icons/mininotes.svg "$BUNDLE_DIR/assets/icons/mininotes.svg"
 
-          # 4. Generate manifest.json with target arch & version 1.0.1
+          # 4. Generate manifest.json with target arch & version 1.0.2
           sed "s/ARCH_PLACEHOLDER/${ARCH}/g" packaging/click/manifest.json > "$BUNDLE_DIR/manifest.json"
 
           # 5. Set executable permissions

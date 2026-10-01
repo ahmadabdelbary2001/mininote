@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
-  <Product Id="*" Name="MiniNote" Language="1033" Version="1.0.1.0" Manufacturer="Ahmad Abdelbary" UpgradeCode="e3e23999-3b3c-4409-a77c-cec2ab02ab19">
+  <Product Id="*" Name="MiniNote" Language="1033" Version="1.0.2.0" Manufacturer="Ahmad Abdelbary" UpgradeCode="e3e23999-3b3c-4409-a77c-cec2ab02ab19">
     <Package InstallerVersion="200" Compressed="yes" InstallScope="perMachine" />
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of MiniNote is already installed." />
