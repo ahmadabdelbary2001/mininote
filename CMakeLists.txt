@@ -1,4 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
+
+if(POLICY CMP0091)
+    cmake_policy(SET CMP0091 NEW)
+endif()
+
 project(mininotes VERSION 0.2.11 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -50,7 +55,7 @@ set(MININOTES_HEADERS
     src/presentation/note_controller.h
     src/presentation/note_list_model.h)
 
-add_executable(mininotes
+add_executable(mininotes WIN32
     src/app/main.cpp
     ${MININOTES_SOURCES}
     ${MININOTES_HEADERS})
@@ -64,6 +69,52 @@ target_link_libraries(mininotes PRIVATE
     Qt${QT_VERSION_MAJOR}::Sql
     Qt${QT_VERSION_MAJOR}::Qml
     Qt${QT_VERSION_MAJOR}::Quick)
+
+include(CheckIPOSupported)
+
+check_ipo_supported(
+    RESULT MININOTES_IPO_SUPPORTED
+    OUTPUT MININOTES_IPO_ERROR
+    LANGUAGES CXX
+)
+
+if(MININOTES_IPO_SUPPORTED)
+    set_property(
+        TARGET mininotes
+        PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE
+    )
+else()
+    message(
+        WARNING
+        "MiniNotes: IPO/LTO is not supported: ${MININOTES_IPO_ERROR}"
+    )
+endif()
+
+if(MINGW)
+    target_compile_options(
+        mininotes
+        PRIVATE
+            "$<$<CONFIG:Release>:-ffunction-sections>"
+            "$<$<CONFIG:Release>:-fdata-sections>"
+    )
+
+    target_link_options(
+        mininotes
+        PRIVATE
+            "$<$<CONFIG:Release>:-Wl,--gc-sections>"
+            "$<$<CONFIG:Release>:-static-libgcc>"
+            "$<$<CONFIG:Release>:-static-libstdc++>"
+            "$<$<CONFIG:Release>:-s>"
+    )
+endif()
+
+if(MSVC)
+    set_property(
+        TARGET mininotes
+        PROPERTY MSVC_RUNTIME_LIBRARY
+        "MultiThreaded$<$<CONFIG:Debug>:Debug>"
+    )
+endif()
 
 configure_file(
     manifest.json.in
@@ -203,6 +254,12 @@ if(MININOTES_PACKAGE)
                     DEPLOY_TOOL_OPTIONS
                         --qmldir "${CMAKE_CURRENT_SOURCE_DIR}/qml"
                         --compiler-runtime
+
+                    EXCLUDE_PLUGIN_TYPES
+                        qmltooling
+                        generic
+                        networkinformation
+                        tls
 
                     EXCLUDE_PLUGINS
                         qsqlibase
