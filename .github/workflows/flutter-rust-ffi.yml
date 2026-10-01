@@ -1,4 +1,4 @@
-﻿name: flutter-rust-ffi
+name: flutter-rust-ffi
 
 on:
   push:
@@ -8,11 +8,13 @@ on:
       - ".github/workflows/flutter-rust-ffi.yml"
       - "flutter_app/**"
       - "native_core/**"
+      - "packaging/**"
   pull_request:
     paths:
       - ".github/workflows/flutter-rust-ffi.yml"
       - "flutter_app/**"
       - "native_core/**"
+      - "packaging/**"
   workflow_dispatch:
 
 permissions:
@@ -27,7 +29,7 @@ env:
 
 jobs:
   desktop:
-    name: Desktop Â· ${{ matrix.label }}
+    name: Desktop · ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -38,17 +40,14 @@ jobs:
             label: Linux
             flutter_target: linux
             artifact_name: mininote-linux-x64
-            artifact_path: dist/mininote-linux-x64.tar.gz
           - os: windows-2022
             label: Windows
             flutter_target: windows
             artifact_name: mininote-windows-x64
-            artifact_path: dist/mininote-windows-x64.zip
           - os: macos-14
             label: macOS
             flutter_target: macos
             artifact_name: mininote-macos
-            artifact_path: dist/mininote-macos.zip
 
     steps:
       - name: Checkout
@@ -95,59 +94,75 @@ jobs:
         if: matrix.flutter_target == 'linux'
         run: |
           set -euo pipefail
-
           cp native_core/target/release/libnative_core.so \
             flutter_app/build/linux/x64/release/bundle/libnative_core.so
-
           mkdir -p dist
-
           tar -C flutter_app/build/linux/x64/release \
             -czf dist/mininote-linux-x64.tar.gz \
             bundle
-
           test -f dist/mininote-linux-x64.tar.gz
 
-      - name: Package Windows bundle
+      - name: Package Windows bundle (.zip, .exe, .msi)
         if: matrix.flutter_target == 'windows'
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item "native_core/target/release/native_core.dll" `
             "flutter_app/build/windows/x64/runner/Release/native_core.dll" -Force
-          if (Test-Path "dist/mininote-windows-x64.zip") {
-            Remove-Item "dist/mininote-windows-x64.zip" -Force
-          }
+
+          # 1. Portable ZIP
+          if (Test-Path "dist/mininote-windows-x64-portable.zip") { Remove-Item "dist/mininote-windows-x64-portable.zip" -Force }
           Compress-Archive `
             -Path "flutter_app/build/windows/x64/runner/Release/*" `
-            -DestinationPath "dist/mininote-windows-x64.zip"
+            -DestinationPath "dist/mininote-windows-x64-portable.zip"
 
-      - name: Package macOS bundle
+          # 2. Setup EXE (Inno Setup)
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (Test-Path $iscc) {
+            & $iscc "packaging/windows/setup.iss"
+          } else {
+            Write-Warning "Inno Setup ISCC.exe not found, skipping setup.exe creation"
+          }
+
+          # 3. MSI Installer (WiX Toolset)
+          $wixPath = "C:\Program Files (x86)\WiX Toolset v3.11\bin"
+          if (Test-Path "$wixPath\heat.exe") {
+            & "$wixPath\heat.exe" dir "flutter_app/build/windows/x64/runner/Release" -cg ProductComponents -dr INSTALLFOLDER -sreg -srd -gg -sfrag -out packaging/windows/AppFiles.wxs
+            & "$wixPath\candle.exe" -o packaging/windows/installer.wixobj packaging/windows/installer.wxs
+            & "$wixPath\candle.exe" -o packaging/windows/AppFiles.wixobj packaging/windows/AppFiles.wxs
+            & "$wixPath\light.exe" -ext WixUIExtension packaging/windows/installer.wixobj packaging/windows/AppFiles.wixobj -o dist/mininote-windows-x64.msi
+          } else {
+            Write-Warning "WiX Toolset not found, skipping MSI build"
+          }
+
+      - name: Package macOS bundle (.zip & .dmg)
         if: matrix.flutter_target == 'macos'
         run: |
           set -euo pipefail
-
           APP_DIR="flutter_app/build/macos/Build/Products/Release/flutter_app.app"
           cp native_core/target/release/libnative_core.dylib \
             "$APP_DIR/Contents/MacOS/libnative_core.dylib"
-
           mkdir -p dist
 
-          ditto -c -k --sequesterRsrc --keepParent \
-            "$APP_DIR" \
-            dist/mininote-macos.zip
+          # 1. Zip bundle
+          ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" dist/mininote-macos.zip
+
+          # 2. DMG image
+          hdiutil create -volname MiniNote -srcfolder "$APP_DIR" -ov -format UDZO dist/mininote-macos.dmg
 
           test -f dist/mininote-macos.zip
+          test -f dist/mininote-macos.dmg
 
-      - name: Upload desktop artifact
+      - name: Upload desktop artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_path }}
+          path: dist/*
           if-no-files-found: error
           retention-days: 30
 
   android:
-    name: Android
+    name: Android Multi-ABI & Universal
     runs-on: ubuntu-24.04
     timeout-minutes: 60
 
@@ -186,7 +201,7 @@ jobs:
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
@@ -201,7 +216,7 @@ jobs:
         run: flutter pub get
         working-directory: flutter_app
 
-      - name: Build Rust Android libraries
+      - name: Build Rust Android libraries (all 4 ABIs)
         working-directory: native_core
         run: |
           rm -rf ../flutter_app/android/app/src/main/jniLibs
@@ -210,25 +225,43 @@ jobs:
           cargo ndk \
             -t armeabi-v7a \
             -t arm64-v8a \
+            -t x86 \
             -t x86_64 \
             -o ../flutter_app/android/app/src/main/jniLibs \
             build \
             --release
 
-      - name: Build Android APK
+      - name: Build Split ABIs Android APKs
+        run: flutter build apk --release --split-per-abi
+        working-directory: flutter_app
+
+      - name: Build Universal Android APK
         run: flutter build apk --release
         working-directory: flutter_app
 
-      - name: Upload Android artifact
+      - name: Organize Android APK artifacts
+        run: |
+          mkdir -p dist/android
+          APK_DIR="flutter_app/build/app/outputs/flutter-apk"
+
+          cp "$APK_DIR/app-arm64-v8a-release.apk" dist/android/mininote-android-arm64-v8a.apk || true
+          cp "$APK_DIR/app-armeabi-v7a-release.apk" dist/android/mininote-android-armeabi-v7a.apk || true
+          cp "$APK_DIR/app-x86-release.apk" dist/android/mininote-android-x86.apk || true
+          cp "$APK_DIR/app-x86_64-release.apk" dist/android/mininote-android-x86_64.apk || true
+          cp "$APK_DIR/app-release.apk" dist/android/mininote-android-universal.apk || true
+
+          ls -la dist/android/
+
+      - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mininote-android-apk
-          path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          name: mininote-android-apks
+          path: dist/android/*.apk
           if-no-files-found: error
           retention-days: 30
 
   ios:
-    name: iOS
+    name: iOS (iPhone)
     runs-on: macos-14
     timeout-minutes: 60
 
@@ -253,23 +286,29 @@ jobs:
         run: flutter build ios --release --no-codesign
         working-directory: flutter_app
 
-      - name: Package iOS app bundle
+      - name: Package iOS app bundle & IPA
         run: |
           set -euo pipefail
+          mkdir -p dist/ios
 
-          mkdir -p dist
-
+          # 1. Unsigned Zip (Runner.app)
           ditto -c -k --sequesterRsrc --keepParent \
             flutter_app/build/ios/iphoneos/Runner.app \
-            dist/mininote-ios-unsigned.zip
+            dist/ios/mininote-ios-unsigned.zip
 
-          test -f dist/mininote-ios-unsigned.zip
+          # 2. Sideloadable IPA (Payload/Runner.app)
+          mkdir -p Payload
+          cp -R flutter_app/build/ios/iphoneos/Runner.app Payload/
+          zip -r dist/ios/mininote-ios.ipa Payload
 
-      - name: Upload iOS artifact
+          test -f dist/ios/mininote-ios-unsigned.zip
+          test -f dist/ios/mininote-ios.ipa
+
+      - name: Upload iOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mininote-ios-unsigned
-          path: dist/mininote-ios-unsigned.zip
+          name: mininote-ios-packages
+          path: dist/ios/*
           if-no-files-found: error
           retention-days: 30
 
@@ -286,29 +325,35 @@ jobs:
       actions: read
 
     steps:
-      - name: Download Linux artifact
+      - name: Download Linux artifacts
         uses: actions/download-artifact@v4
         with:
           name: mininote-linux-x64
-          path: dist/linux
+          path: dist/all
 
-      - name: Download Windows artifact
+      - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
           name: mininote-windows-x64
-          path: dist/windows
+          path: dist/all
 
-      - name: Download macOS artifact
+      - name: Download macOS artifacts
         uses: actions/download-artifact@v4
         with:
           name: mininote-macos
-          path: dist/macos
+          path: dist/all
 
-      - name: Download Android artifact
+      - name: Download Android artifacts
         uses: actions/download-artifact@v4
         with:
-          name: mininote-android-apk
-          path: dist/android
+          name: mininote-android-apks
+          path: dist/all
+
+      - name: Download iOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: mininote-ios-packages
+          path: dist/all
 
       - name: Upload all Flutter artifacts to GitHub Release
         env:
@@ -319,19 +364,10 @@ jobs:
           TAG="$GITHUB_REF_NAME"
           REPO="$GITHUB_REPOSITORY"
 
-          LINUX_FILE=$(find dist/linux -name "*.tar.gz" | head -1)
-          WINDOWS_FILE=$(find dist/windows -name "*.zip" | head -1)
-          MACOS_FILE=$(find dist/macos -name "*.zip" | head -1)
-          ANDROID_FILE=$(find dist/android -name "*.apk" | head -1)
-
-          FILES=""
-          [ -f "$LINUX_FILE"   ] && FILES="$FILES $LINUX_FILE"
-          [ -f "$WINDOWS_FILE" ] && FILES="$FILES $WINDOWS_FILE"
-          [ -f "$MACOS_FILE"   ] && FILES="$FILES $MACOS_FILE"
-          [ -f "$ANDROID_FILE" ] && FILES="$FILES $ANDROID_FILE"
+          FILES=$(find dist/all -type f)
 
           if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
-            # Release already exists (created by ubuntu-touch workflow) – just upload
+            # Release already exists – upload all files
             gh release upload "$TAG" $FILES --repo "$REPO" --clobber
           else
             gh release create "$TAG" $FILES --repo "$REPO" --title "MiniNote $TAG" --generate-notes
