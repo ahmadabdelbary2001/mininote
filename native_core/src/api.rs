@@ -35,41 +35,41 @@ fn into_c_string(value: String) -> *mut c_char {
         .into_raw()
 }
 
-fn repo() -> Result<std::sync::MutexGuard<'static, Option<NoteRepository>>, String> {
+fn repo_guard() -> Result<std::sync::MutexGuard<'static, Option<NoteRepository>>, String> {
     Ok(REPO
         .lock()
         .map_err(|_| "Failed to lock repository state".to_string())?)
 }
 
 pub fn init_db(db_path: String) -> Result<(), String> {
-    let repo = NoteRepository::new(db_path).map_err(|e| e.to_string())?;
-    let mut global_repo = repo()?;
-    *global_repo = Some(repo);
+    let repository = NoteRepository::new(db_path).map_err(|e| e.to_string())?;
+    let mut global_repo = repo_guard()?;
+    *global_repo = Some(repository);
     Ok(())
 }
 
 pub fn fetch_notes() -> Result<Vec<Note>, String> {
-    let guard = repo()?;
+    let guard = repo_guard()?;
     let repo = guard.as_ref().ok_or("Database not initialized")?;
     repo.get_all().map_err(|e| e.to_string())
 }
 
 pub fn add_note(title: String, content: String) -> Result<Note, String> {
-    let guard = repo()?;
+    let guard = repo_guard()?;
     let repo = guard.as_ref().ok_or("Database not initialized")?;
     repo.create(CreateNoteDto { title, content })
         .map_err(|e| e.to_string())
 }
 
 pub fn edit_note(id: i64, title: String, content: String) -> Result<(), String> {
-    let guard = repo()?;
+    let guard = repo_guard()?;
     let repo = guard.as_ref().ok_or("Database not initialized")?;
     repo.update(UpdateNoteDto { id, title, content })
         .map_err(|e| e.to_string())
 }
 
 pub fn remove_note(id: i64) -> Result<(), String> {
-    let guard = repo()?;
+    let guard = repo_guard()?;
     let repo = guard.as_ref().ok_or("Database not initialized")?;
     repo.delete(id).map_err(|e| e.to_string())
 }
