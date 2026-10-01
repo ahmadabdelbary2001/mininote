@@ -235,28 +235,34 @@ jobs:
         run: flutter build apk --release --split-per-abi
         working-directory: flutter_app
 
-      - name: Build Universal Android APK
-        run: flutter build apk --release
+      - name: Build Universal Android APK & App Bundle (AAB for Play Store)
+        run: |
+          flutter build apk --release
+          flutter build appbundle --release
         working-directory: flutter_app
 
-      - name: Organize Android APK artifacts
+      - name: Organize Android APK & AAB artifacts
         run: |
           mkdir -p dist/android
           APK_DIR="flutter_app/build/app/outputs/flutter-apk"
+          AAB_DIR="flutter_app/build/app/outputs/bundle/release"
 
           cp "$APK_DIR/app-arm64-v8a-release.apk" dist/android/mininote-android-arm64-v8a.apk || true
           cp "$APK_DIR/app-armeabi-v7a-release.apk" dist/android/mininote-android-armeabi-v7a.apk || true
           cp "$APK_DIR/app-x86-release.apk" dist/android/mininote-android-x86.apk || true
           cp "$APK_DIR/app-x86_64-release.apk" dist/android/mininote-android-x86_64.apk || true
           cp "$APK_DIR/app-release.apk" dist/android/mininote-android-universal.apk || true
+          cp "$AAB_DIR/app-release.aab" dist/android/mininote-android-release.aab || true
 
           ls -la dist/android/
 
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mininote-android-apks
-          path: dist/android/*.apk
+          name: mininote-android-packages
+          path: |
+            dist/android/*.apk
+            dist/android/*.aab
           if-no-files-found: error
           retention-days: 30
 
@@ -346,7 +352,7 @@ jobs:
       - name: Download Android artifacts
         uses: actions/download-artifact@v4
         with:
-          name: mininote-android-apks
+          name: mininote-android-packages
           path: dist/all
 
       - name: Download iOS artifacts

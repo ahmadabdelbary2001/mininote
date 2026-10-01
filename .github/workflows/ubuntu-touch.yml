@@ -34,12 +34,18 @@ jobs:
           - arch: amd64
             rust_target: x86_64-unknown-linux-gnu
             flutter_arch: x64
+            linker: gcc
+            target_env_var: CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER
           - arch: arm64
             rust_target: aarch64-unknown-linux-gnu
             flutter_arch: arm64
+            linker: aarch64-linux-gnu-gcc
+            target_env_var: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
           - arch: armhf
             rust_target: armv7-unknown-linux-gnueabihf
             flutter_arch: arm
+            linker: arm-linux-gnueabihf-gcc
+            target_env_var: CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER
 
     steps:
       - name: Checkout
@@ -79,7 +85,10 @@ jobs:
             native_core -> target
 
       - name: Build Rust core (${{ matrix.arch }})
+        env:
+          RUSTFLAGS: "-C linker=${{ matrix.linker }}"
         run: |
+          export ${{ matrix.target_env_var }}="${{ matrix.linker }}"
           cargo build --manifest-path native_core/Cargo.toml --release --target ${{ matrix.rust_target }}
 
       - name: Install Flutter dependencies
@@ -152,7 +161,8 @@ jobs:
           ARCH="${{ matrix.arch }}"
           mkdir -p dist
 
-          click build build/click_bundle --outdir dist
+          click build build/click_bundle
+          mv *.click dist/ || mv build/*.click dist/ || true
 
           CLICK_FILE=$(find dist -name "*.click" | head -1)
           test -f "$CLICK_FILE"
