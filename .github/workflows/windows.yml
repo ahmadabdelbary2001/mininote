@@ -1,0 +1,121 @@
+name: Windows
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    paths:
+      - ".github/workflows/windows.yml"
+      - "flutter_app/**"
+      - "native_core/**"
+      - "packaging/windows/**"
+  pull_request:
+    paths:
+      - ".github/workflows/windows.yml"
+      - "flutter_app/**"
+      - "native_core/**"
+      - "packaging/windows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.41.7"
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native_core -> target
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+        working-directory: flutter_app
+
+      - name: Build Rust core
+        run: cargo build --manifest-path native_core/Cargo.toml --release
+
+      - name: Build Flutter Windows app
+        run: flutter build windows --release
+        working-directory: flutter_app
+
+      - name: Package Windows bundle (.zip, .exe, .msi)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          Copy-Item "native_core/target/release/native_core.dll" `
+            "flutter_app/build/windows/x64/runner/Release/native_core.dll" -Force
+
+          # 1. Portable ZIP
+          if (Test-Path "dist/mininote-windows-x64-portable.zip") { Remove-Item "dist/mininote-windows-x64-portable.zip" -Force }
+          Compress-Archive `
+            -Path "flutter_app/build/windows/x64/runner/Release/*" `
+            -DestinationPath "dist/mininote-windows-x64-portable.zip"
+
+          # 2. Setup EXE (Inno Setup)
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (Test-Path $iscc) {
+            & $iscc "packaging/windows/setup.iss"
+          } else {
+            Write-Warning "Inno Setup ISCC.exe not found"
+          }
+
+          # 3. MSI Installer (WiX Toolset)
+          $wixPath = "C:\Program Files (x86)\WiX Toolset v3.11\bin"
+          if (Test-Path "$wixPath\heat.exe") {
+            & "$wixPath\heat.exe" dir "flutter_app/build/windows/x64/runner/Release" -cg ProductComponents -dr INSTALLFOLDER -sreg -srd -gg -sfrag -out packaging/windows/AppFiles.wxs
+            & "$wixPath\candle.exe" -o packaging/windows/installer.wixobj packaging/windows/installer.wxs
+            & "$wixPath\candle.exe" -o packaging/windows/AppFiles.wixobj packaging/windows/AppFiles.wxs
+            & "$wixPath\light.exe" -ext WixUIExtension packaging/windows/installer.wixobj packaging/windows/AppFiles.wixobj -o dist/mininote-windows-x64.msi
+          } else {
+            Write-Warning "WiX Toolset not found"
+          }
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mininote-windows-x64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          REPO="$GITHUB_REPOSITORY"
+          FILES=$(find dist -type f)
+
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release upload "$TAG" $FILES --repo "$REPO" --clobber
+          else
+            gh release create "$TAG" $FILES --repo "$REPO" --title "MiniNote $TAG" --generate-notes
+          fi

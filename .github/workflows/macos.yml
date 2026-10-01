@@ -1,0 +1,103 @@
+name: macOS
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    paths:
+      - ".github/workflows/macos.yml"
+      - "flutter_app/**"
+      - "native_core/**"
+  pull_request:
+    paths:
+      - ".github/workflows/macos.yml"
+      - "flutter_app/**"
+      - "native_core/**"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.41.7"
+
+jobs:
+  macos:
+    name: macOS (Universal / DMG & ZIP)
+    runs-on: macos-14
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            native_core -> target
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+        working-directory: flutter_app
+
+      - name: Build Rust core
+        run: cargo build --manifest-path native_core/Cargo.toml --release
+
+      - name: Build Flutter macOS app
+        run: flutter build macos --release
+        working-directory: flutter_app
+
+      - name: Package macOS bundle (.zip & .dmg)
+        run: |
+          set -euo pipefail
+          APP_DIR="flutter_app/build/macos/Build/Products/Release/flutter_app.app"
+          cp native_core/target/release/libnative_core.dylib \
+            "$APP_DIR/Contents/MacOS/libnative_core.dylib"
+          mkdir -p dist
+
+          # 1. Zip bundle
+          ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" dist/mininote-macos.zip
+
+          # 2. DMG image
+          hdiutil create -volname MiniNote -srcfolder "$APP_DIR" -ov -format UDZO dist/mininote-macos.dmg
+
+          test -f dist/mininote-macos.zip
+          test -f dist/mininote-macos.dmg
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mininote-macos
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          REPO="$GITHUB_REPOSITORY"
+          FILES=$(find dist -type f)
+
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release upload "$TAG" $FILES --repo "$REPO" --clobber
+          else
+            gh release create "$TAG" $FILES --repo "$REPO" --title "MiniNote $TAG" --generate-notes
+          fi
