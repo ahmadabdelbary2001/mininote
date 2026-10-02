@@ -4,17 +4,7 @@ on:
   push:
     branches: ["**"]
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
-    paths:
-      - ".github/workflows/windows.yml"
-      - "flutter_app/**"
-      - "native_core/**"
-      - "packaging/windows/**"
   pull_request:
-    paths:
-      - ".github/workflows/windows.yml"
-      - "flutter_app/**"
-      - "native_core/**"
-      - "packaging/windows/**"
   workflow_dispatch:
 
 permissions:
