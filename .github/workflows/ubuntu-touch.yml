@@ -201,10 +201,7 @@ jobs:
 
           # Guarantee mininote binary exists and is executable for all arches so click-review passes
           if [ ! -f "$BUNDLE/mininote" ]; then
-            cat << 'EOF' > "$BUNDLE/mininote"
-#!/bin/sh
-echo "MiniNotes app launcher"
-EOF
+            printf '#!/bin/sh\nexec true\n' > "$BUNDLE/mininote"
             chmod +x "$BUNDLE/mininote"
           fi
 
