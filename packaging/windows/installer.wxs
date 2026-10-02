@@ -18,10 +18,4 @@
       </Directory>
     </Directory>
   </Fragment>
-
-  <Fragment>
-    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
-      <!-- Harvested component group filled by wix heat or direct reference -->
-    </ComponentGroup>
-  </Fragment>
 </Wix>

@@ -129,3 +129,65 @@ jobs:
           else
             gh release create "$TAG" $FILES --repo "$REPO" --title "MiniNote $TAG" --generate-notes
           fi
+
+  snap:
+    name: Snap Package (.snap)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: flutter pub get
+        working-directory: flutter_app
+
+      - name: Build Rust core
+        run: cargo build --manifest-path native_core/Cargo.toml --release
+
+      - name: Build Flutter Linux app
+        run: flutter build linux --release
+        working-directory: flutter_app
+
+      - name: Build Snap
+        id: snapcraft
+        uses: snapcore/action-build@v1
+
+      - name: Normalize Snap filename
+        run: |
+          set -euxo pipefail
+          mkdir -p dist
+          cp "${{ steps.snapcraft.outputs.snap }}" "dist/mininotes_1.0.2_amd64.snap"
+          ls -lh dist/
+
+      - name: Upload Snap artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mininotes-linux-amd64-snap
+          path: dist/*.snap
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish Snap to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          REPO="$GITHUB_REPOSITORY"
+          FILES=$(find dist -name "*.snap")
+
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            gh release upload "$TAG" $FILES --repo "$REPO" --clobber
+          fi

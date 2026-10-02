@@ -1,63 +1,39 @@
 name: mininotes
-
 base: core24
-
-adopt-info: mininotes
-title: MiniNotes
-license: MIT
-contact:
-  - https://t.me/Ahmad_Abdelbary
-issues:
-  - https://github.com/ahmadabdelbary2001/mininote/issues
-source-code:
-  - https://github.com/ahmadabdelbary2001/mininote
-website:
-  - https://github.com/ahmadabdelbary2001/mininote
-
+version: '1.0.2'
 summary: Offline-first notes application
-
 description: |
-  MiniNotes is a small offline-first notes application built
-  with Qt, QML, C++ and SQLite.
+  MiniNotes is a fast offline-first notes application built
+  with Flutter and Rust FFI.
 
 grade: stable
 confinement: strict
-
 icon: assets/icons/mininotes.svg
 
 apps:
   mininotes:
-    command: usr/bin/mininotes
-
+    command: mininote
     desktop: usr/share/applications/io.github.ahmadabdelbary2001.mininote.desktop
-
     extensions:
-      - kde-neon-6
-
-    environment:
-      QT_QUICK_BACKEND: software
-      QT_QUICK_CONTROLS_STYLE: Basic
+      - gnome
+    plugs:
+      - home
+      - network
+      - opengl
+      - wayland
+      - x11
 
 parts:
   mininotes:
-    plugin: cmake
-
-    source: .
-
-    override-pull: |
+    plugin: dump
+    source: flutter_app/build/linux/x64/release/bundle
+    organize:
+      '*': .
+    override-build: |
       craftctl default
-
-      VERSION="$(sed -nE 's/^project\(mininotes VERSION ([0-9.]+).*/\1/p' "$CRAFT_PART_SRC/CMakeLists.txt")"
-
-      test -n "$VERSION"
-
-      craftctl set version="$VERSION"
-
-    build-packages:
-      - libqt6sql6-sqlite
-
-    cmake-parameters:
-      - -DCMAKE_BUILD_TYPE=Release
-      - -DCMAKE_INSTALL_PREFIX=/usr
-      - -DMININOTES_BUILD_TESTS=OFF
-      - -DMININOTES_PACKAGE=ON
+      cp "$CRAFT_PART_SRC/../../../../native_core/target/release/libnative_core.so" "$CRAFT_PART_INSTALL/lib/libnative_core.so" 2>/dev/null || true
+      cp "$CRAFT_PART_SRC/../../../../native_core/target/release/libnative_core.so" "$CRAFT_PART_INSTALL/libnative_core.so" 2>/dev/null || true
+      mkdir -p "$CRAFT_PART_INSTALL/usr/share/applications"
+      mkdir -p "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps"
+      cp "$CRAFT_PART_SRC/../../../../packaging/click/mininotes.desktop" "$CRAFT_PART_INSTALL/usr/share/applications/io.github.ahmadabdelbary2001.mininote.desktop" 2>/dev/null || true
+      cp "$CRAFT_PART_SRC/../../../../assets/icons/mininotes.svg" "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/io.github.ahmadabdelbary2001.mininote.svg" 2>/dev/null || true

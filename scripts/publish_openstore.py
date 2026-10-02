@@ -7,6 +7,15 @@ import urllib.parse
 import uuid
 
 def generate_changelog():
+    for p in [".ci/release-notes/release-notes.md", "release-notes.md"]:
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    c = f.read().strip()
+                    if c:
+                        return c
+            except Exception:
+                pass
     tag = os.environ.get("GITHUB_REF_NAME", "v1.0.2")
     return f"""## Changes in {tag}
 
@@ -84,7 +93,7 @@ def main():
         return
 
     changelog = generate_changelog()
-    print("Generated Changelog for OpenStore:\n" + changelog)
+    print("Using Changelog for OpenStore:\n" + changelog)
 
     success_count = 0
     for click_file in click_files:
