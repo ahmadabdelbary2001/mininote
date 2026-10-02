@@ -362,21 +362,16 @@ jobs:
             fi
 
             # Setup layout for clickable:
-            # 1. build/<arch>/app/ contains the extracted click directory (with manifest.json)
-            # 2. build/<arch>/app/*.click contains the built package
-            APP_DIR="build/${ARCH}/app/install"
-            mkdir -p "$APP_DIR"
-            dpkg-deb -x "$CLICK_FILE" "$APP_DIR" || true
-            # Manifest with arch
+            # clickable looks for manifest at build/<arch>/app/install/manifest.json
+            # and click file at build/<arch>/app/*.click
+            mkdir -p "build/${ARCH}/app/install"
+            dpkg-deb -x "$CLICK_FILE" "build/${ARCH}/app/install" || true
+            sed "s/ARCH_PLACEHOLDER/${ARCH}/g" packaging/click/manifest.json > "build/${ARCH}/app/install/manifest.json"
             sed "s/ARCH_PLACEHOLDER/${ARCH}/g" packaging/click/manifest.json > "build/${ARCH}/app/manifest.json"
-            sed "s/ARCH_PLACEHOLDER/${ARCH}/g" packaging/click/manifest.json > "$APP_DIR/manifest.json"
             cp -f "$CLICK_FILE" "build/${ARCH}/app/"
 
             echo "--> Publishing ${ARCH} ($CLICK_FILE) to OpenStore..."
-            # Try publishing by specifying package directly or via --arch
-            if ! clickable publish "$CLICK_FILE" --arch "${ARCH}" "$CHANGELOG" && \
-               ! clickable publish --arch "${ARCH}" "$CHANGELOG" && \
-               ! clickable publish "$CLICK_FILE" "$CHANGELOG"; then
+            if ! clickable publish --arch "${ARCH}" --changelog "$CHANGELOG"; then
               echo "::error::clickable publish failed for ${ARCH}"
               exit 1
             fi
