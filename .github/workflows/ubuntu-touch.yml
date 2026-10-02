@@ -332,9 +332,46 @@ jobs:
               --notes-file .ci/release-notes/release-notes.md
           fi
 
-      - name: Publish to OpenStore (Authoritative direct API submission)
+      - name: Install Clickable
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends click file python3-pip
+          python3 -m pip install --break-system-packages \
+            "clickable-ut==${{ env.CLICKABLE_VERSION }}"
+
+      - name: Publish to OpenStore via Clickable
         env:
           OPENSTORE_API_KEY: ${{ secrets.OPENSTORE_API_KEY }}
+          CLICKABLE_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-          python3 scripts/publish_openstore.py
+
+          if [ -z "${OPENSTORE_API_KEY:-}" ]; then
+            echo "::error::OPENSTORE_API_KEY secret is not set. Cannot publish to OpenStore."
+            exit 1
+          fi
+
+          CHANGELOG="$(cat .ci/release-notes/release-notes.md 2>/dev/null || echo 'Update to v1.0.3')"
+
+          # Setup layout for clickable publish: build/<arch>/app/*.click
+          for f in dist/click/*.click; do
+            [ -f "$f" ] || continue
+            fname="$(basename "$f")"
+            if echo "$fname" | grep -q "arm64"; then
+              mkdir -p build/arm64/app && cp -f "$f" "build/arm64/app/$fname"
+            elif echo "$fname" | grep -q "armhf"; then
+              mkdir -p build/armhf/app && cp -f "$f" "build/armhf/app/$fname"
+            elif echo "$fname" | grep -q "amd64"; then
+              mkdir -p build/amd64/app && cp -f "$f" "build/amd64/app/$fname"
+            fi
+          done
+
+          echo "=== Publishing Click packages to OpenStore ==="
+          for ARCH in arm64 armhf amd64; do
+            echo "--> Publishing ${ARCH} to OpenStore..."
+            if ! clickable publish --arch "${ARCH}" "$CHANGELOG"; then
+              echo "::error::clickable publish failed for ${ARCH}"
+              exit 1
+            fi
+            echo "--> Successfully published ${ARCH} to OpenStore."
+          done
