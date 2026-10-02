@@ -87,7 +87,8 @@ def main():
         print("OPENSTORE_API_KEY is not configured in environment, skipping OpenStore publication.")
         return
 
-    click_files = glob.glob("dist/click/*.click") + glob.glob("dist/*.click")
+    found_files = glob.glob("dist/click/*.click") + glob.glob("dist/*.click")
+    click_files = list(dict.fromkeys([os.path.abspath(f) for f in found_files if os.path.isfile(f)]))
     if not click_files:
         print("No .click packages found to upload.")
         return

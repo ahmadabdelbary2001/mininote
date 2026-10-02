@@ -1,10 +1,21 @@
 name: mininotes
 base: core24
 version: '1.0.2'
+title: MiniNotes
 summary: Offline-first notes application
 description: |
   MiniNotes is a fast offline-first notes application built
   with Flutter and Rust FFI.
+
+license: MIT
+contact:
+  - https://t.me/Ahmad_Abdelbary
+issues:
+  - https://github.com/ahmadabdelbary2001/mininote/issues
+source-code:
+  - https://github.com/ahmadabdelbary2001/mininote
+website:
+  - https://github.com/ahmadabdelbary2001/mininote
 
 grade: stable
 confinement: strict
