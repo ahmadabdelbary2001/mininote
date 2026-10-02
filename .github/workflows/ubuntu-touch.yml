@@ -235,16 +235,32 @@ jobs:
           mv "$CLICK_FILE" dist/
           CLICK_FILE="$(find dist -name '*.click' | head -1)"
 
-          # Canonical name expected by clickable publish
+          # Canonical name expected by clickable and openstore
           CANONICAL="dist/mininotes_${CLICK_VERSION}_${ARCH}.click"
           [ "$CLICK_FILE" = "$CANONICAL" ] || mv "$CLICK_FILE" "$CANONICAL"
 
-          # Mirror into build/<arch>/app/ for clickable publish lookup
+          # Mirror into build/<arch>/app/ for lookup
+          mkdir -p "build/${ARCH}/app"
           cp "$CANONICAL" "build/${ARCH}/app/mininotes_${CLICK_VERSION}_${ARCH}.click"
           cp "$CANONICAL" "build/mininotes_${CLICK_VERSION}_${ARCH}.click"
 
           echo "CLICK_FILE=$CANONICAL" >> "$GITHUB_ENV"
           ls -lh "$CANONICAL"
+
+      - name: Validate Click package
+        run: |
+          set -euxo pipefail
+          ARCH="${{ matrix.arch }}"
+          CANONICAL="dist/mininotes_${CLICK_VERSION}_${ARCH}.click"
+          test -f "$CANONICAL"
+
+          echo "=== Validating Click package: $CANONICAL ==="
+          click info "$CANONICAL"
+
+          # Verify click review / lint
+          if command -v clickable &>/dev/null; then
+            clickable review "$CANONICAL" || echo "clickable review warning (non-fatal advisory)"
+          fi
 
       - name: Upload Click artifact
         uses: actions/upload-artifact@v4
@@ -271,13 +287,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Clickable & dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends click file python3-pip
-          python3 -m pip install --break-system-packages \
-            "clickable-ut==${{ env.CLICKABLE_VERSION }}"
-
       - name: Download all Click artifacts
         uses: actions/download-artifact@v4
         with:
@@ -298,6 +307,13 @@ jobs:
           cp -f dist/clicks/*.click dist/click/ || true
           ls -lh dist/click/
 
+          # Verify we have all 3 expected architectures
+          COUNT=$(find dist/click -name "*.click" | wc -l)
+          if [ "$COUNT" -lt 3 ]; then
+            echo "::error::Expected 3 .click packages (arm64, armhf, amd64), found $COUNT"
+            exit 1
+          fi
+
       - name: Upload All Click Packages to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -316,43 +332,9 @@ jobs:
               --notes-file .ci/release-notes/release-notes.md
           fi
 
-      - name: Publish to OpenStore
+      - name: Publish to OpenStore (Authoritative direct API submission)
         env:
           OPENSTORE_API_KEY: ${{ secrets.OPENSTORE_API_KEY }}
-          CLICKABLE_NON_INTERACTIVE: "1"
         run: |
-          set -euxo pipefail
-
-          if [ -z "${OPENSTORE_API_KEY:-}" ]; then
-            echo "::error::OPENSTORE_API_KEY secret is not set. Cannot publish to OpenStore."
-            exit 1
-          fi
-
-          CHANGELOG="$(cat .ci/release-notes/release-notes.md 2>/dev/null || echo 'Update to v1.0.3')"
-
-          # Setup layout for clickable publish
-          # clickable looks for build/<arch>/app/*.click
-          for f in dist/click/*.click; do
-            [ -f "$f" ] || continue
-            fname="$(basename "$f")"
-            if echo "$fname" | grep -q "arm64"; then
-              mkdir -p build/arm64/app && cp -f "$f" "build/arm64/app/$fname"
-            elif echo "$fname" | grep -q "armhf"; then
-              mkdir -p build/armhf/app && cp -f "$f" "build/armhf/app/$fname"
-            elif echo "$fname" | grep -q "amd64"; then
-              mkdir -p build/amd64/app && cp -f "$f" "build/amd64/app/$fname"
-            fi
-          done
-
-          echo "Attempting OpenStore publish via clickable..."
-          PUBLISHED_COUNT=0
-          for ARCH in arm64 armhf amd64; do
-            if [ -d "build/${ARCH}/app" ] && [ -n "$(ls -A build/${ARCH}/app/*.click 2>/dev/null)" ]; then
-              echo "Publishing ${ARCH} via clickable publish..."
-              clickable publish --arch "${ARCH}" "$CHANGELOG" || echo "clickable publish for ${ARCH} returned status $?"
-              PUBLISHED_COUNT=$((PUBLISHED_COUNT + 1))
-            fi
-          done
-
-          echo "Executing fallback Python OpenStore direct API submitter..."
-          python3 scripts/publish_openstore.py || true
+          set -euo pipefail
+          python3 scripts/publish_openstore.py

@@ -3,7 +3,7 @@ import sys
 import glob
 import json
 import urllib.request
-import urllib.parse
+import urllib.error
 import uuid
 
 def generate_changelog():
@@ -39,7 +39,7 @@ def submit_to_openstore(click_path, api_key, changelog):
         file_bytes = f.read()
 
     body = bytearray()
-    
+
     # Add changelog field
     body.extend(f"--{boundary}\r\n".encode("utf-8"))
     body.extend(b'Content-Disposition: form-data; name="changelog"\r\n\r\n')
@@ -72,36 +72,56 @@ def submit_to_openstore(click_path, api_key, changelog):
             resp_body = resp.read().decode("utf-8", errors="replace")
             print(f"OpenStore response for {filename} [HTTP {resp.status}]:")
             print(resp_body)
-            return True
+            return True, resp_body
     except urllib.error.HTTPError as e:
         err_msg = e.read().decode("utf-8", errors="replace")
         print(f"ERROR uploading {filename} [HTTP {e.code}]: {err_msg}", file=sys.stderr)
-        return False
+        return False, err_msg
     except Exception as ex:
         print(f"ERROR uploading {filename}: {ex}", file=sys.stderr)
-        return False
+        return False, str(ex)
 
 def main():
     api_key = os.environ.get("OPENSTORE_API_KEY", "").strip()
     if not api_key:
-        print("OPENSTORE_API_KEY is not configured in environment, skipping OpenStore publication.")
-        return
+        print("ERROR: OPENSTORE_API_KEY is not configured in environment.", file=sys.stderr)
+        sys.exit(1)
 
-    found_files = glob.glob("dist/click/*.click") + glob.glob("dist/*.click")
+    found_files = glob.glob("dist/click/*.click") + glob.glob("dist/clicks/*.click") + glob.glob("dist/*.click")
     click_files = list(dict.fromkeys([os.path.abspath(f) for f in found_files if os.path.isfile(f)]))
     if not click_files:
-        print("No .click packages found to upload.")
-        return
+        print("ERROR: No .click packages found to upload to OpenStore.", file=sys.stderr)
+        sys.exit(1)
 
     changelog = generate_changelog()
     print("Using Changelog for OpenStore:\n" + changelog)
 
     success_count = 0
-    for click_file in click_files:
-        if submit_to_openstore(click_file, api_key, changelog):
-            success_count += 1
+    failures = []
 
-    print(f"OpenStore publishing complete. Successfully submitted {success_count}/{len(click_files)} packages.")
+    # Track architectures
+    archs_uploaded = []
+
+    for click_file in sorted(click_files):
+        fname = os.path.basename(click_file)
+        success, details = submit_to_openstore(click_file, api_key, changelog)
+        if success:
+            success_count += 1
+            archs_uploaded.append(fname)
+            print(f"SUCCESS: {fname} submitted to OpenStore.")
+        else:
+            failures.append((fname, details))
+            print(f"FAILURE: {fname} failed to submit to OpenStore: {details}", file=sys.stderr)
+
+    print(f"\nOpenStore Submission Summary: {success_count}/{len(click_files)} succeeded.")
+
+    if failures:
+        print("\nFailed packages:", file=sys.stderr)
+        for fname, err in failures:
+            print(f"  - {fname}: {err}", file=sys.stderr)
+        sys.exit(1)
+
+    print("All Click packages were successfully submitted to OpenStore.")
 
 if __name__ == "__main__":
     main()
