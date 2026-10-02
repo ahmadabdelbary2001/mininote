@@ -371,9 +371,6 @@ jobs:
             cp -f "$CLICK_FILE" "build/${ARCH}/app/"
 
             echo "--> Publishing ${ARCH} ($CLICK_FILE) to OpenStore..."
-            if ! clickable publish --arch "${ARCH}" --changelog "$CHANGELOG"; then
-              echo "::error::clickable publish failed for ${ARCH}"
-              exit 1
-            fi
+            clickable publish --arch "${ARCH}" "$CHANGELOG"
             echo "--> Successfully published ${ARCH} to OpenStore."
           done
