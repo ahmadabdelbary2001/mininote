@@ -133,40 +133,13 @@ jobs:
   snap:
     name: Snap Package (.snap)
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
-
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Linux desktop system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang cmake ninja-build pkg-config \
-            libgtk-3-dev liblzma-dev
-
-      - name: Install Flutter dependencies
-        run: flutter pub get
-        working-directory: flutter_app
-
-      - name: Build Rust core
-        run: cargo build --manifest-path native_core/Cargo.toml --release
-
-      - name: Build Flutter Linux app
-        run: flutter build linux --release
-        working-directory: flutter_app
-
-      - name: Build Snap
+      - name: Build Snap (Flutter + Rust built inside snapcraft)
         id: snapcraft
         uses: snapcore/action-build@v1
 
@@ -174,8 +147,12 @@ jobs:
         run: |
           set -euxo pipefail
           mkdir -p dist
-          cp "${{ steps.snapcraft.outputs.snap }}" "dist/mininotes_1.0.2_amd64.snap"
-          ls -lh dist/
+          # Detect version from pubspec.yaml for a canonical filename
+          VERSION="$(grep '^version:' flutter_app/pubspec.yaml | sed 's/version: //;s/+.*//' | xargs)"
+          SNAP_OUT="dist/mininotes_${VERSION}_amd64.snap"
+          cp "${{ steps.snapcraft.outputs.snap }}" "$SNAP_OUT"
+          echo "SNAP_FILE=$SNAP_OUT" >> "$GITHUB_ENV"
+          ls -lh "$SNAP_OUT"
 
       - name: Upload Snap artifact
         uses: actions/upload-artifact@v4

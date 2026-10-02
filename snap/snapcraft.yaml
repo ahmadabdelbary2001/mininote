@@ -1,6 +1,6 @@
 name: mininotes
 base: core24
-version: '1.0.2'
+adopt-info: mininotes
 title: MiniNotes
 summary: Offline-first notes application
 description: |
@@ -33,18 +33,87 @@ apps:
       - opengl
       - wayland
       - x11
+    environment:
+      LD_LIBRARY_PATH: $SNAP/lib:$SNAP:$LD_LIBRARY_PATH
 
 parts:
   mininotes:
-    plugin: dump
-    source: flutter_app/build/linux/x64/release/bundle
-    organize:
-      '*': .
-    override-build: |
+    plugin: nil
+    source: .
+    build-packages:
+      - curl
+      - git
+      - unzip
+      - xz-utils
+      - zip
+      - libgtk-3-dev
+      - pkg-config
+      - clang
+      - cmake
+      - ninja-build
+      - libssl-dev
+    stage-packages:
+      - libgtk-3-0t64
+      - libglib2.0-0t64
+      - libglu1-mesa
+      - libegl1
+      - libx11-6
+    override-pull: |
       craftctl default
-      cp "$CRAFT_PART_SRC/../../../../native_core/target/release/libnative_core.so" "$CRAFT_PART_INSTALL/lib/libnative_core.so" 2>/dev/null || true
-      cp "$CRAFT_PART_SRC/../../../../native_core/target/release/libnative_core.so" "$CRAFT_PART_INSTALL/libnative_core.so" 2>/dev/null || true
+      VERSION="$(grep '^version:' flutter_app/pubspec.yaml | sed 's/version: //;s/+.*//')"
+      test -n "$VERSION"
+      craftctl set version="$VERSION"
+    override-build: |
+      set -euxo pipefail
+
+      # ── 1. Install Flutter ───────────────────────────────────────
+      FLUTTER_VERSION="3.41.7"
+      FLUTTER_DIR="$CRAFT_PART_BUILD/flutter"
+      if [ ! -d "$FLUTTER_DIR" ]; then
+        curl -fsSL \
+          "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz" \
+          -o /tmp/flutter.tar.xz
+        tar -xf /tmp/flutter.tar.xz -C "$CRAFT_PART_BUILD"
+      fi
+      export PATH="$FLUTTER_DIR/bin:$PATH"
+      flutter config --no-analytics
+      flutter precache --linux
+
+      # ── 2. Install Rust ─────────────────────────────────────────
+      if ! command -v cargo &>/dev/null; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+        export PATH="$HOME/.cargo/bin:$PATH"
+      fi
+      export PATH="$HOME/.cargo/bin:$PATH"
+
+      # ── 3. Build Rust core ───────────────────────────────────────
+      cargo build \
+        --manifest-path "$CRAFT_PART_SRC/native_core/Cargo.toml" \
+        --release
+
+      # ── 4. Build Flutter Linux app ───────────────────────────────
+      cd "$CRAFT_PART_SRC/flutter_app"
+      flutter pub get
+      flutter build linux --release
+      cd "$CRAFT_PART_SRC"
+
+      # ── 5. Install bundle into CRAFT_PART_INSTALL ────────────────
+      BUNDLE="$CRAFT_PART_SRC/flutter_app/build/linux/x64/release/bundle"
+      cp -a "$BUNDLE/." "$CRAFT_PART_INSTALL/"
+
+      # Rename executable (pubspec name = 'mininote')
+      [ -f "$CRAFT_PART_INSTALL/mininote" ] || \
+        mv "$CRAFT_PART_INSTALL/flutter_app" "$CRAFT_PART_INSTALL/mininote" 2>/dev/null || true
+      chmod +x "$CRAFT_PART_INSTALL/mininote"
+
+      # Copy Rust shared library
+      cp "$CRAFT_PART_SRC/native_core/target/release/libnative_core.so" \
+         "$CRAFT_PART_INSTALL/lib/libnative_core.so"
+
+      # Desktop entry and icon
       mkdir -p "$CRAFT_PART_INSTALL/usr/share/applications"
       mkdir -p "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps"
-      cp "$CRAFT_PART_SRC/../../../../packaging/click/mininotes.desktop" "$CRAFT_PART_INSTALL/usr/share/applications/io.github.ahmadabdelbary2001.mininote.desktop" 2>/dev/null || true
-      cp "$CRAFT_PART_SRC/../../../../assets/icons/mininotes.svg" "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/io.github.ahmadabdelbary2001.mininote.svg" 2>/dev/null || true
+      cp "$CRAFT_PART_SRC/packaging/click/mininotes.desktop" \
+         "$CRAFT_PART_INSTALL/usr/share/applications/io.github.ahmadabdelbary2001.mininote.desktop"
+      cp "$CRAFT_PART_SRC/assets/icons/mininotes.svg" \
+         "$CRAFT_PART_INSTALL/usr/share/icons/hicolor/scalable/apps/io.github.ahmadabdelbary2001.mininote.svg"

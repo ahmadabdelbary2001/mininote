@@ -192,8 +192,10 @@ jobs:
             cp -R flutter_app/build/linux/arm/release/bundle/. "$BUNDLE/"
           fi
 
-          # Rename executable if needed
-          [ -f "$BUNDLE/flutter_app" ] && mv "$BUNDLE/flutter_app" "$BUNDLE/mininote"
+          # Rename executable – Flutter names it after pubspec 'name' field = 'mininote'
+          # (arm64/armhf don't build Flutter so no binary is expected there)
+          [ -f "$BUNDLE/flutter_app" ] && mv "$BUNDLE/flutter_app" "$BUNDLE/mininote" || true
+          [ -f "$BUNDLE/mininote" ]    && chmod +x "$BUNDLE/mininote"               || true
 
           # Rust shared library
           RUST_SO="native_core/target/${{ matrix.rust_target }}/release/libnative_core.so"
@@ -210,7 +212,8 @@ jobs:
           # Manifest with arch substituted
           sed "s/ARCH_PLACEHOLDER/${ARCH}/g" packaging/click/manifest.json > "$BUNDLE/manifest.json"
 
-          chmod +x "$BUNDLE/mininote" "$BUNDLE/mininote-wrapper"
+          # mininote-wrapper must always be executable
+          chmod +x "$BUNDLE/mininote-wrapper"
 
           # Version from manifest
           VERSION="$(python3 -c "import json; print(json.load(open('$BUNDLE/manifest.json'))['version'])")"
@@ -225,14 +228,16 @@ jobs:
           ARCH="${{ matrix.arch }}"
           mkdir -p dist
 
-          # Build the .click package from the assembled bundle
-          click build build/click_bundle --output dist/
-          CLICK_FILE="$(find dist -name '*.click' | head -1)"
+          # click build outputs the .click in the current directory (no --output flag)
+          click build build/click_bundle
+          CLICK_FILE="$(find . -maxdepth 1 -name '*.click' | head -1)"
           test -f "$CLICK_FILE"
+          mv "$CLICK_FILE" dist/
+          CLICK_FILE="$(find dist -name '*.click' | head -1)"
 
           # Canonical name expected by clickable publish
           CANONICAL="dist/mininotes_${CLICK_VERSION}_${ARCH}.click"
-          [ "$CLICK_FILE" = "$CANONICAL" ] || cp "$CLICK_FILE" "$CANONICAL"
+          [ "$CLICK_FILE" = "$CANONICAL" ] || mv "$CLICK_FILE" "$CANONICAL"
 
           # Mirror into build/<arch>/app/ for clickable publish lookup
           cp "$CANONICAL" "build/${ARCH}/app/mininotes_${CLICK_VERSION}_${ARCH}.click"

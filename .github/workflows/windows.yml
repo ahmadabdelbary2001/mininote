@@ -53,15 +53,22 @@ jobs:
         run: flutter build windows --release
         working-directory: flutter_app
 
-      - name: Install WiX Toolset v3
+      - name: Ensure WiX Toolset v3 is available
         shell: pwsh
         run: |
-          if (-not (Test-Path "C:\Program Files (x86)\WiX Toolset v3.11\bin\heat.exe")) {
-            Write-Host "Installing WiX Toolset v3 via Chocolatey..."
-            choco install wixtoolset --version=3.11.2 -y --no-progress
-            refreshenv
+          # Try to find heat.exe in common WiX locations
+          $candidates = @(
+            "C:\Program Files (x86)\WiX Toolset v3.11\bin\heat.exe",
+            "C:\Program Files (x86)\WiX Toolset v3.14\bin\heat.exe",
+            "C:\Program Files\WiX Toolset v3.11\bin\heat.exe",
+            "C:\Program Files\WiX Toolset v3.14\bin\heat.exe"
+          )
+          $found = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if ($found) {
+            Write-Host "WiX Toolset found: $found"
           } else {
-            Write-Host "WiX Toolset v3 already present."
+            Write-Host "WiX Toolset not found, installing via Chocolatey..."
+            choco install wixtoolset -y --no-progress
           }
 
       - name: Build Windows Store MSIX Package
@@ -89,18 +96,22 @@ jobs:
             Write-Warning "Inno Setup ISCC.exe not found"
           }
 
-          # 3. MSI Installer (WiX Toolset v3)
-          $wixPath = "C:\Program Files (x86)\WiX Toolset v3.11\bin"
-          if (-not (Test-Path "$wixPath\heat.exe")) {
-            $wixPath = "C:\Program Files\WiX Toolset v3.11\bin"
-          }
-          if (Test-Path "$wixPath\heat.exe") {
-            & "$wixPath\heat.exe" dir "flutter_app/build/windows/x64/runner/Release" `
+          # 3. MSI Installer (WiX Toolset v3 – find installed version dynamically)
+          $wixBin = @(
+            "C:\Program Files (x86)\WiX Toolset v3.11\bin",
+            "C:\Program Files (x86)\WiX Toolset v3.14\bin",
+            "C:\Program Files\WiX Toolset v3.11\bin",
+            "C:\Program Files\WiX Toolset v3.14\bin"
+          ) | Where-Object { Test-Path "$_\heat.exe" } | Select-Object -First 1
+
+          if ($wixBin) {
+            Write-Host "Using WiX from: $wixBin"
+            & "$wixBin\heat.exe" dir "flutter_app/build/windows/x64/runner/Release" `
               -cg ProductComponents -dr INSTALLFOLDER -sreg -srd -gg -sfrag `
               -out packaging/windows/AppFiles.wxs
-            & "$wixPath\candle.exe" -o packaging/windows/installer.wixobj packaging/windows/installer.wxs
-            & "$wixPath\candle.exe" -o packaging/windows/AppFiles.wixobj packaging/windows/AppFiles.wxs
-            & "$wixPath\light.exe" -ext WixUIExtension `
+            & "$wixBin\candle.exe" -o packaging/windows/installer.wixobj packaging/windows/installer.wxs
+            & "$wixBin\candle.exe" -o packaging/windows/AppFiles.wixobj packaging/windows/AppFiles.wxs
+            & "$wixBin\light.exe" -ext WixUIExtension `
               packaging/windows/installer.wixobj packaging/windows/AppFiles.wixobj `
               -o dist/mininote-windows-x64.msi
             Write-Host "MSI built successfully."
