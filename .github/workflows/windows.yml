@@ -104,16 +104,29 @@ jobs:
             "C:\Program Files\WiX Toolset v3.14\bin"
           ) | Where-Object { Test-Path "$_\heat.exe" } | Select-Object -First 1
 
+          $releaseDir = "flutter_app/build/windows/x64/runner/Release"
+
           if ($wixBin) {
             Write-Host "Using WiX from: $wixBin"
-            & "$wixBin\heat.exe" dir "flutter_app/build/windows/x64/runner/Release" `
+
+            & "$wixBin\heat.exe" dir $releaseDir `
               -cg ProductComponents -dr INSTALLFOLDER -sreg -srd -gg -sfrag `
               -out packaging/windows/AppFiles.wxs
+            if ($LASTEXITCODE -ne 0) { Write-Error "heat.exe failed"; exit 1 }
+
             & "$wixBin\candle.exe" -o packaging/windows/installer.wixobj packaging/windows/installer.wxs
+            if ($LASTEXITCODE -ne 0) { Write-Error "candle installer.wxs failed"; exit 1 }
+
             & "$wixBin\candle.exe" -o packaging/windows/AppFiles.wixobj packaging/windows/AppFiles.wxs
+            if ($LASTEXITCODE -ne 0) { Write-Error "candle AppFiles.wxs failed"; exit 1 }
+
+            # -b tells light.exe where to resolve SourceDir (the harvested file root)
             & "$wixBin\light.exe" -ext WixUIExtension `
+              -b $releaseDir `
               packaging/windows/installer.wixobj packaging/windows/AppFiles.wixobj `
               -o dist/mininote-windows-x64.msi
+            if ($LASTEXITCODE -ne 0) { Write-Error "light.exe failed"; exit 1 }
+
             Write-Host "MSI built successfully."
           } else {
             Write-Error "WiX Toolset not found - MSI build failed"

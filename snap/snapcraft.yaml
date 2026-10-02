@@ -76,6 +76,11 @@ parts:
         tar -xf /tmp/flutter.tar.xz -C "$CRAFT_PART_BUILD"
       fi
       export PATH="$FLUTTER_DIR/bin:$PATH"
+
+      # snapcraft runs as root; git refuses directories owned by another uid
+      git config --global --add safe.directory "$FLUTTER_DIR"
+      git config --global --add safe.directory "$FLUTTER_DIR/.git"
+
       flutter config --no-analytics
       flutter precache --linux
 
