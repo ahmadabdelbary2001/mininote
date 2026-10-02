@@ -1,4 +1,4 @@
 clickable_minimum_required: 8.8.0
 builder: custom
 kill: mininote
-framework: ubuntu-touch-24.04-1.x
+framework: ubuntu-sdk-20.04
