@@ -304,7 +304,16 @@ jobs:
           ARCH="${{ matrix.arch }}"
           CLICK_FILE="$(find dist/click/${ARCH} -name '*.click' | head -1)"
           test -f "$CLICK_FILE"
-          VERSION="$(python3 -c "import zipfile, json; z=zipfile.ZipFile('$CLICK_FILE'); print(json.loads(z.read('manifest.json'))['version'])")"
+
+          # Extract version from manifest.json
+          # .click is a Debian binary package (ar archive containing control.tar.gz + data.tar.gz) or can be read via manifest.json directly
+          VERSION="$(python3 -c "import json; print(json.load(open('packaging/click/manifest.json'))['version'])")"
+
+          # If click tool is available, verify click info
+          if command -v click &>/dev/null; then
+            click info "$CLICK_FILE" || true
+          fi
+
           mkdir -p "build/${ARCH}/app"
           cp "$CLICK_FILE" "build/${ARCH}/app/mininotes_${VERSION}_${ARCH}.click"
           cp "$CLICK_FILE" "build/mininotes_${VERSION}_${ARCH}.click"
