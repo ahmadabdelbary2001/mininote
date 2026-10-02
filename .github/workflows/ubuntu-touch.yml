@@ -332,14 +332,13 @@ jobs:
               --notes-file .ci/release-notes/release-notes.md
           fi
 
-      - name: Install Clickable
+      - name: Install dependencies for publishing
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends click file python3-pip
-          python3 -m pip install --break-system-packages \
-            "clickable-ut==${{ env.CLICKABLE_VERSION }}"
+          python3 -m pip install --break-system-packages requests "clickable-ut==${{ env.CLICKABLE_VERSION }}"
 
-      - name: Publish to OpenStore via Clickable
+      - name: Publish to OpenStore
         env:
           OPENSTORE_API_KEY: ${{ secrets.OPENSTORE_API_KEY }}
           CLICKABLE_NON_INTERACTIVE: "1"
@@ -351,26 +350,6 @@ jobs:
             exit 1
           fi
 
-          CHANGELOG="$(cat .ci/release-notes/release-notes.md 2>/dev/null || echo 'Update to v1.0.3')"
-
           echo "=== Publishing Click packages to OpenStore ==="
-          for ARCH in arm64 armhf amd64; do
-            CLICK_FILE="$(find dist/click -name "*_${ARCH}.click" | head -1)"
-            if [ -z "$CLICK_FILE" ] || [ ! -f "$CLICK_FILE" ]; then
-              echo "::error::Could not find .click package for ${ARCH}"
-              exit 1
-            fi
+          python3 scripts/publish_openstore.py
 
-            # Setup layout for clickable:
-            # clickable looks for manifest at build/<arch>/app/install/manifest.json
-            # and click file at build/<arch>/app/*.click
-            mkdir -p "build/${ARCH}/app/install"
-            dpkg-deb -x "$CLICK_FILE" "build/${ARCH}/app/install" || true
-            sed "s/ARCH_PLACEHOLDER/${ARCH}/g" packaging/click/manifest.json > "build/${ARCH}/app/install/manifest.json"
-            sed "s/ARCH_PLACEHOLDER/${ARCH}/g" packaging/click/manifest.json > "build/${ARCH}/app/manifest.json"
-            cp -f "$CLICK_FILE" "build/${ARCH}/app/"
-
-            echo "--> Publishing ${ARCH} ($CLICK_FILE) to OpenStore..."
-            clickable publish --arch "${ARCH}" "$CHANGELOG"
-            echo "--> Successfully published ${ARCH} to OpenStore."
-          done
