@@ -353,23 +353,30 @@ jobs:
 
           CHANGELOG="$(cat .ci/release-notes/release-notes.md 2>/dev/null || echo 'Update to v1.0.3')"
 
-          # Setup layout for clickable publish: build/<arch>/app/*.click
-          for f in dist/click/*.click; do
-            [ -f "$f" ] || continue
-            fname="$(basename "$f")"
-            if echo "$fname" | grep -q "arm64"; then
-              mkdir -p build/arm64/app && cp -f "$f" "build/arm64/app/$fname"
-            elif echo "$fname" | grep -q "armhf"; then
-              mkdir -p build/armhf/app && cp -f "$f" "build/armhf/app/$fname"
-            elif echo "$fname" | grep -q "amd64"; then
-              mkdir -p build/amd64/app && cp -f "$f" "build/amd64/app/$fname"
-            fi
-          done
-
           echo "=== Publishing Click packages to OpenStore ==="
           for ARCH in arm64 armhf amd64; do
-            echo "--> Publishing ${ARCH} to OpenStore..."
-            if ! clickable publish --arch "${ARCH}" "$CHANGELOG"; then
+            CLICK_FILE="$(find dist/click -name "*_${ARCH}.click" | head -1)"
+            if [ -z "$CLICK_FILE" ] || [ ! -f "$CLICK_FILE" ]; then
+              echo "::error::Could not find .click package for ${ARCH}"
+              exit 1
+            fi
+
+            # Setup layout for clickable:
+            # 1. build/<arch>/app/ contains the extracted click directory (with manifest.json)
+            # 2. build/<arch>/app/*.click contains the built package
+            APP_DIR="build/${ARCH}/app/install"
+            mkdir -p "$APP_DIR"
+            dpkg-deb -x "$CLICK_FILE" "$APP_DIR" || true
+            # Manifest with arch
+            sed "s/ARCH_PLACEHOLDER/${ARCH}/g" packaging/click/manifest.json > "build/${ARCH}/app/manifest.json"
+            sed "s/ARCH_PLACEHOLDER/${ARCH}/g" packaging/click/manifest.json > "$APP_DIR/manifest.json"
+            cp -f "$CLICK_FILE" "build/${ARCH}/app/"
+
+            echo "--> Publishing ${ARCH} ($CLICK_FILE) to OpenStore..."
+            # Try publishing by specifying package directly or via --arch
+            if ! clickable publish "$CLICK_FILE" --arch "${ARCH}" "$CHANGELOG" && \
+               ! clickable publish --arch "${ARCH}" "$CHANGELOG" && \
+               ! clickable publish "$CLICK_FILE" "$CHANGELOG"; then
               echo "::error::clickable publish failed for ${ARCH}"
               exit 1
             fi
