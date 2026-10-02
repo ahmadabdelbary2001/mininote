@@ -49,6 +49,8 @@ parts:
       - libgtk-3-dev
       - pkg-config
       - clang
+      - clang-18
+      - llvm-18
       - cmake
       - ninja-build
       - libssl-dev
