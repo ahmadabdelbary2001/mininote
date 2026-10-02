@@ -43,7 +43,7 @@
     <content_rating type="oars-1.1"/>
 
     <releases>
-        <release version="1.0.2" date="2026-09-22">
+        <release version="1.0.3" date="2026-09-22">
             <description>
                 <p>
                     Added Flatpak packaging and GitHub Actions CI, alongside continued Linux packaging and Ubuntu Touch multi-architecture

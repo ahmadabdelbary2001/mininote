@@ -9,7 +9,7 @@
             "desktop": "mininotes.desktop"
         }
     },
-    "version": "1.0.2",
+    "version": "1.0.3",
     "maintainer": "Ahmad Abdelbary <ahmadabdelbary2001@github.com>",
     "framework": "ubuntu-touch-24.04-1.x"
 }

@@ -16,7 +16,7 @@ def generate_changelog():
                         return c
             except Exception:
                 pass
-    tag = os.environ.get("GITHUB_REF_NAME", "v1.0.2")
+    tag = os.environ.get("GITHUB_REF_NAME", "v1.0.3")
     return f"""## Changes in {tag}
 
 ### Features
