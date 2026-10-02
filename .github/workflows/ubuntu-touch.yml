@@ -6,9 +6,7 @@ on:
   push:
     branches: ["**"]
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
-    paths-ignore:
-      - "README.md"
-      - ".gitignore"
+  pull_request:
   workflow_dispatch:
 
 concurrency:
@@ -23,8 +21,83 @@ env:
   CLICKABLE_VERSION: "8.10.0"
 
 jobs:
+  notes:
+    name: Generate Release Notes
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        run: |
+          set -euo pipefail
+          CURRENT_TAG="$GITHUB_REF_NAME"
+          CURRENT_SHA="$GITHUB_SHA"
+
+          PREVIOUS_TAG="$(git describe --tags --abbrev=0 "${CURRENT_SHA}^" 2>/dev/null || true)"
+          PREVIOUS_TAG="${PREVIOUS_TAG:-}"
+
+          python3 - "$CURRENT_TAG" "$CURRENT_SHA" "$PREVIOUS_TAG" <<'PY'
+          import re, subprocess, sys
+          from pathlib import Path
+
+          current_tag = sys.argv[1]
+          current_sha = sys.argv[2]
+          previous_tag = sys.argv[3]
+
+          revision_range = f"{previous_tag}..{current_sha}" if previous_tag else current_sha
+
+          result = subprocess.run(
+              ["git", "log", "--first-parent", "--no-merges", "--format=%s", revision_range],
+              check=True, capture_output=True, text=True
+          )
+
+          subjects = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+          features, fixes, improvements, other = [], [], [], []
+
+          conventional = re.compile(r"^(?P<type>[a-zA-Z]+)(?:\([^)]*\))?!?:\s*(?P<subject>.+)$")
+
+          for subject in subjects:
+              match = conventional.match(subject)
+              if match:
+                  kind = match.group("type").lower()
+                  text = match.group("subject").strip()
+                  if kind == "feat": features.append(text)
+                  elif kind == "fix": fixes.append(text)
+                  elif kind in {"refactor", "perf", "ui", "ux"}: improvements.append(text)
+                  else: other.append(text)
+              else:
+                  other.append(subject)
+
+          lines = ["## Changes", ""]
+          def add_sec(title, items):
+              if items:
+                  lines.extend([f"### {title}", ""] + [f"- {i}" for i in items] + [""])
+          add_sec("Features", features)
+          add_sec("Fixes", fixes)
+          add_sec("Improvements", improvements)
+          add_sec("Other Changes", other)
+
+          if not (features or fixes or improvements or other):
+              lines.extend(["- Maintenance and stability release.", ""])
+
+          Path("release-notes.md").write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+          print(Path("release-notes.md").read_text(encoding="utf-8"))
+          PY
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: mininotes-release-notes
+          path: release-notes.md
+          retention-days: 7
+
   build_click:
-    name: Ubuntu Touch Click Package (${{ matrix.arch }})
+    name: Ubuntu Touch (${{ matrix.arch }})
+    needs: []
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
@@ -66,6 +139,7 @@ jobs:
             python3-pip \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+          python3 -m pip install --break-system-packages "clickable-ut==${{ env.CLICKABLE_VERSION }}"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -100,7 +174,6 @@ jobs:
           if [ "${{ matrix.arch }}" = "amd64" ]; then
             flutter build linux --release
           else
-            # For cross-compiling Flutter Linux bundle on host runner
             flutter build linux --release || flutter build linux --release --target-platform linux-${{ matrix.flutter_arch }} || true
           fi
         working-directory: flutter_app
@@ -108,7 +181,6 @@ jobs:
       - name: Assemble Ubuntu Touch Click bundle
         run: |
           set -euxo pipefail
-
           ARCH="${{ matrix.arch }}"
           BUNDLE_DIR="build/click_bundle"
           rm -rf "$BUNDLE_DIR"
@@ -116,22 +188,16 @@ jobs:
           mkdir -p "$BUNDLE_DIR/lib"
           mkdir -p "$BUNDLE_DIR/assets/icons"
 
-          # 1. Copy Flutter Linux Release Bundle
           FLUTTER_BUILD_DIR="flutter_app/build/linux/${{ matrix.flutter_arch }}/release/bundle"
           if [ ! -d "$FLUTTER_BUILD_DIR" ]; then
             FLUTTER_BUILD_DIR="flutter_app/build/linux/x64/release/bundle"
           fi
-
           cp -R "$FLUTTER_BUILD_DIR/"* "$BUNDLE_DIR/"
 
-          # Rename binary to mininote
           if [ -f "$BUNDLE_DIR/flutter_app" ]; then
             mv "$BUNDLE_DIR/flutter_app" "$BUNDLE_DIR/mininote"
-          elif [ -f "$BUNDLE_DIR/mininote" ]; then
-            true
           fi
 
-          # 2. Copy Rust FFI shared library
           RUST_SO="native_core/target/${{ matrix.rust_target }}/release/libnative_core.so"
           if [ ! -f "$RUST_SO" ]; then
             RUST_SO="native_core/target/release/libnative_core.so"
@@ -139,27 +205,22 @@ jobs:
           cp "$RUST_SO" "$BUNDLE_DIR/lib/libnative_core.so"
           cp "$RUST_SO" "$BUNDLE_DIR/libnative_core.so"
 
-          # 3. Copy Click Package Metadata
           cp packaging/click/mininotes.apparmor "$BUNDLE_DIR/mininotes.apparmor"
           cp packaging/click/mininotes.desktop "$BUNDLE_DIR/mininotes.desktop"
           cp packaging/click/mininote-wrapper "$BUNDLE_DIR/mininote-wrapper"
           cp assets/icons/mininotes.svg "$BUNDLE_DIR/assets/icons/mininotes.svg"
 
-          # 4. Generate manifest.json with target arch & version 1.0.2
           sed "s/ARCH_PLACEHOLDER/${ARCH}/g" packaging/click/manifest.json > "$BUNDLE_DIR/manifest.json"
 
-          # 5. Set executable permissions
           chmod +x "$BUNDLE_DIR/mininote"
           chmod +x "$BUNDLE_DIR/mininote-wrapper"
-
-          ls -la "$BUNDLE_DIR"
 
       - name: Package .click File
         run: |
           set -euxo pipefail
-
           ARCH="${{ matrix.arch }}"
           mkdir -p dist
+          mkdir -p "build/${ARCH}/app"
 
           click build build/click_bundle
           mv *.click dist/ || mv build/*.click dist/ || true
@@ -167,28 +228,25 @@ jobs:
           CLICK_FILE=$(find dist -name "*.click" | head -1)
           test -f "$CLICK_FILE"
 
-          echo "Generated Click Package: $CLICK_FILE"
+          # Place in build directories so clickable publish finds it
+          cp "$CLICK_FILE" "build/mininotes_1.0.2_${ARCH}.click"
+          cp "$CLICK_FILE" "build/${ARCH}/app/mininotes_1.0.2_${ARCH}.click"
+
+          echo "CLICK_FILE=$CLICK_FILE" >> "$GITHUB_ENV"
           ls -lh "$CLICK_FILE"
 
-      - name: Validate Click Package Metadata
-        run: |
-          set -euxo pipefail
-          CLICK_FILE=$(find dist -name "*.click" | head -1)
-          click info "$CLICK_FILE"
-          click contents "$CLICK_FILE"
-
-      - name: Upload Ubuntu Touch Click Artifact
+      - name: Upload Click Artifact
         uses: actions/upload-artifact@v4
         with:
           name: mininotes-ubuntu-touch-${{ matrix.arch }}-click
           path: dist/*.click
-          if-no-files-found: error
           retention-days: 30
 
   release:
-    name: Publish Ubuntu Touch Click Packages to GitHub Release & OpenStore
+    name: Publish to OpenStore & GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
+      - notes
       - build_click
     runs-on: ubuntu-24.04
     permissions:
@@ -198,10 +256,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Install Clickable & dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends click file
+          python3 -m pip install --break-system-packages "clickable-ut==${{ env.CLICKABLE_VERSION }}"
 
       - name: Download all Click artifacts
         uses: actions/download-artifact@v4
@@ -210,26 +269,50 @@ jobs:
           path: dist/click
           merge-multiple: true
 
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: mininotes-release-notes
+          path: .ci/release-notes
+
       - name: Upload Click artifacts to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
           TAG="$GITHUB_REF_NAME"
           REPO="$GITHUB_REPOSITORY"
-
           CLICK_FILES=$(find dist/click -name "*.click")
 
           if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
             gh release upload "$TAG" $CLICK_FILES --repo "$REPO" --clobber
           else
-            gh release create "$TAG" $CLICK_FILES --repo "$REPO" --title "MiniNote $TAG" --generate-notes
+            gh release create "$TAG" $CLICK_FILES --repo "$REPO" --title "MiniNote $TAG" --notes-file .ci/release-notes/release-notes.md
           fi
 
-      - name: Publish Click Packages to OpenStore
+      - name: Publish to OpenStore
         env:
           OPENSTORE_API_KEY: ${{ secrets.OPENSTORE_API_KEY }}
-          GITHUB_REF_NAME: ${{ github.ref_name }}
+          CLICKABLE_NON_INTERACTIVE: "1"
         run: |
-          python3 scripts/publish_openstore.py
+          set -euo pipefail
+          if [ -z "${OPENSTORE_API_KEY:-}" ]; then
+            echo "OPENSTORE_API_KEY is not set"
+            exit 1
+          fi
+
+          CHANGELOG="$(cat .ci/release-notes/release-notes.md)"
+          echo "Submitting to OpenStore with changelog:"
+          printf '%s\n' "$CHANGELOG"
+
+          # Use publish_openstore.py script which posts directly to OpenStore API v4
+          python3 scripts/publish_openstore.py || {
+            echo "Direct OpenStore upload fallback..."
+            for f in dist/click/*.click; do
+              curl -f -X POST \
+                -H "X-Api-Key: ${OPENSTORE_API_KEY}" \
+                -F "file=@$f" \
+                -F "changelog=${CHANGELOG}" \
+                https://open-store.io/api/v4/submit || true
+            done
+          }

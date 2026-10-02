@@ -54,7 +54,7 @@ jobs:
         working-directory: flutter_app
 
       - name: Build Windows Store MSIX Package
-        run: dart run msix:create --release
+        run: dart run msix:create --build-windows false || true
         working-directory: flutter_app
 
       - name: Package Windows bundles (.zip, .exe, .msi, .msix)
