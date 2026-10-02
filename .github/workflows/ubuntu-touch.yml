@@ -291,7 +291,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: mininotes-ubuntu-touch-*-click
-          path: dist/clicks
+          path: dist/click
           merge-multiple: true
 
       - name: Download release notes
@@ -300,19 +300,20 @@ jobs:
           name: mininotes-release-notes
           path: .ci/release-notes
 
-      - name: Prepare click files for GitHub & OpenStore
+      - name: Verify click packages
         run: |
           set -euxo pipefail
-          mkdir -p dist/click
-          cp -f dist/clicks/*.click dist/click/ || true
           ls -lh dist/click/
 
-          # Verify we have all 3 expected architectures
+          # Verify we have exactly 3 expected architectures
           COUNT=$(find dist/click -name "*.click" | wc -l)
-          if [ "$COUNT" -lt 3 ]; then
-            echo "::error::Expected 3 .click packages (arm64, armhf, amd64), found $COUNT"
+          echo "Found $COUNT .click package(s)"
+          if [ "$COUNT" -ne 3 ]; then
+            echo "::error::Expected exactly 3 .click packages (arm64, armhf, amd64), found $COUNT"
+            find dist/click -name "*.click"
             exit 1
           fi
+
 
       - name: Upload All Click Packages to GitHub Release
         env:

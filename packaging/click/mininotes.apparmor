@@ -1,7 +1,6 @@
 {
     "policy_groups": [
-        "networking",
-        "storage"
+        "networking"
     ],
     "policy_version": "2404.1"
 }

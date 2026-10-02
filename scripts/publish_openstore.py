@@ -139,7 +139,10 @@ def main():
     package_name, version = get_package_info()
     print(f"=== Publishing {package_name} v{version} to OpenStore ===")
 
-    found_files = glob.glob("dist/click/*.click") + glob.glob("dist/clicks/*.click") + glob.glob("dist/*.click")
+    found_files = glob.glob("dist/click/*.click")
+    if not found_files:
+        # Fallback to other known locations
+        found_files = glob.glob("dist/*.click")
     click_files = list(dict.fromkeys([os.path.abspath(f) for f in found_files if os.path.isfile(f)]))
     if not click_files:
         print("ERROR: No .click packages found to upload to OpenStore.", file=sys.stderr)
