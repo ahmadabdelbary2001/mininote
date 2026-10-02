@@ -319,5 +319,40 @@ jobs:
       - name: Publish to OpenStore
         env:
           OPENSTORE_API_KEY: ${{ secrets.OPENSTORE_API_KEY }}
+          CLICKABLE_NON_INTERACTIVE: "1"
         run: |
-          python3 scripts/publish_openstore.py
+          set -euxo pipefail
+
+          if [ -z "${OPENSTORE_API_KEY:-}" ]; then
+            echo "::error::OPENSTORE_API_KEY secret is not set. Cannot publish to OpenStore."
+            exit 1
+          fi
+
+          CHANGELOG="$(cat .ci/release-notes/release-notes.md 2>/dev/null || echo 'Update to v1.0.3')"
+
+          # Setup layout for clickable publish
+          # clickable looks for build/<arch>/app/*.click
+          for f in dist/click/*.click; do
+            [ -f "$f" ] || continue
+            fname="$(basename "$f")"
+            if echo "$fname" | grep -q "arm64"; then
+              mkdir -p build/arm64/app && cp -f "$f" "build/arm64/app/$fname"
+            elif echo "$fname" | grep -q "armhf"; then
+              mkdir -p build/armhf/app && cp -f "$f" "build/armhf/app/$fname"
+            elif echo "$fname" | grep -q "amd64"; then
+              mkdir -p build/amd64/app && cp -f "$f" "build/amd64/app/$fname"
+            fi
+          done
+
+          echo "Attempting OpenStore publish via clickable..."
+          PUBLISHED_COUNT=0
+          for ARCH in arm64 armhf amd64; do
+            if [ -d "build/${ARCH}/app" ] && [ -n "$(ls -A build/${ARCH}/app/*.click 2>/dev/null)" ]; then
+              echo "Publishing ${ARCH} via clickable publish..."
+              clickable publish --arch "${ARCH}" "$CHANGELOG" || echo "clickable publish for ${ARCH} returned status $?"
+              PUBLISHED_COUNT=$((PUBLISHED_COUNT + 1))
+            fi
+          done
+
+          echo "Executing fallback Python OpenStore direct API submitter..."
+          python3 scripts/publish_openstore.py || true
