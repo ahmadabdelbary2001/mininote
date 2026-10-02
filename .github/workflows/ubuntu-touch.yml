@@ -102,24 +102,21 @@ jobs:
   build_click:
     name: Build Click (${{ matrix.arch }})
     needs: []
-    runs-on: ${{ matrix.runs_on }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: arm64
-            runs_on: ubuntu-24.04-arm
             rust_target: aarch64-unknown-linux-gnu
-            linker: gcc
+            linker: aarch64-linux-gnu-gcc
             target_env_var: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
           - arch: armhf
-            runs_on: ubuntu-24.04
             rust_target: armv7-unknown-linux-gnueabihf
             linker: arm-linux-gnueabihf-gcc
             target_env_var: CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER
           - arch: amd64
-            runs_on: ubuntu-24.04
             rust_target: x86_64-unknown-linux-gnu
             linker: gcc
             target_env_var: CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER
@@ -173,8 +170,8 @@ jobs:
         run: flutter pub get
         working-directory: flutter_app
 
-      - name: Build Flutter Linux (amd64 and arm64)
-        if: matrix.arch == 'amd64' || matrix.arch == 'arm64'
+      - name: Build Flutter Linux (amd64 only)
+        if: matrix.arch == 'amd64'
         run: flutter build linux --release
         working-directory: flutter_app
 
