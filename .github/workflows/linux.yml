@@ -91,34 +91,14 @@ jobs:
           mkdir -p "$DEB_ROOT/usr/lib/mininote/lib"
           cp native_core/target/release/libnative_core.so "$DEB_ROOT/usr/lib/mininote/lib/libnative_core.so"
 
-          cat > "$DEB_ROOT/usr/bin/mininote" << 'EOF'
-#!/bin/bash
-exec /usr/lib/mininote/mininote "$@"
-EOF
+          printf '#!/bin/bash\nexec /usr/lib/mininote/mininote "$@"\n' > "$DEB_ROOT/usr/bin/mininote"
           chmod +x "$DEB_ROOT/usr/bin/mininote"
 
-          cat > "$DEB_ROOT/usr/share/applications/io.github.ahmadabdelbary2001.mininote.desktop" << 'EOF'
-[Desktop Entry]
-Name=MiniNote
-Comment=MiniNote cross-platform notes app powered by Flutter + Rust
-Exec=/usr/bin/mininote
-Icon=io.github.ahmadabdelbary2001.mininote
-Terminal=false
-Type=Application
-Categories=Utility;TextEditor;
-EOF
+          printf '[Desktop Entry]\nName=MiniNote\nComment=MiniNote cross-platform notes app powered by Flutter + Rust\nExec=/usr/bin/mininote\nIcon=io.github.ahmadabdelbary2001.mininote\nTerminal=false\nType=Application\nCategories=Utility;TextEditor;\n' > "$DEB_ROOT/usr/share/applications/io.github.ahmadabdelbary2001.mininote.desktop"
 
           cp assets/icons/mininotes.svg "$DEB_ROOT/usr/share/icons/hicolor/scalable/apps/io.github.ahmadabdelbary2001.mininote.svg"
 
-          cat > "$DEB_ROOT/DEBIAN/control" << EOF
-Package: mininote
-Version: 1.0.2
-Section: utils
-Priority: optional
-Architecture: amd64
-Maintainer: Ahmad Abdelbary <ahmadabdelbary2001@github.com>
-Description: MiniNote - Fast offline notes app powered by Flutter and Rust FFI.
-EOF
+          printf 'Package: mininote\nVersion: 1.0.2\nSection: utils\nPriority: optional\nArchitecture: amd64\nMaintainer: Ahmad Abdelbary <ahmadabdelbary2001@github.com>\nDescription: MiniNote - Fast offline notes app powered by Flutter and Rust FFI.\n' > "$DEB_ROOT/DEBIAN/control"
 
           dpkg-deb --build "$DEB_ROOT" dist/mininote_1.0.2_amd64.deb
           test -f dist/mininote_1.0.2_amd64.deb
