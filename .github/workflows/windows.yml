@@ -53,6 +53,17 @@ jobs:
         run: flutter build windows --release
         working-directory: flutter_app
 
+      - name: Install WiX Toolset v3
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\WiX Toolset v3.11\bin\heat.exe")) {
+            Write-Host "Installing WiX Toolset v3 via Chocolatey..."
+            choco install wixtoolset --version=3.11.2 -y --no-progress
+            refreshenv
+          } else {
+            Write-Host "WiX Toolset v3 already present."
+          }
+
       - name: Build Windows Store MSIX Package
         run: dart run msix:create --build-windows false || true
         working-directory: flutter_app
@@ -78,15 +89,24 @@ jobs:
             Write-Warning "Inno Setup ISCC.exe not found"
           }
 
-          # 3. MSI Installer (WiX Toolset)
+          # 3. MSI Installer (WiX Toolset v3)
           $wixPath = "C:\Program Files (x86)\WiX Toolset v3.11\bin"
+          if (-not (Test-Path "$wixPath\heat.exe")) {
+            $wixPath = "C:\Program Files\WiX Toolset v3.11\bin"
+          }
           if (Test-Path "$wixPath\heat.exe") {
-            & "$wixPath\heat.exe" dir "flutter_app/build/windows/x64/runner/Release" -cg ProductComponents -dr INSTALLFOLDER -sreg -srd -gg -sfrag -out packaging/windows/AppFiles.wxs
+            & "$wixPath\heat.exe" dir "flutter_app/build/windows/x64/runner/Release" `
+              -cg ProductComponents -dr INSTALLFOLDER -sreg -srd -gg -sfrag `
+              -out packaging/windows/AppFiles.wxs
             & "$wixPath\candle.exe" -o packaging/windows/installer.wixobj packaging/windows/installer.wxs
             & "$wixPath\candle.exe" -o packaging/windows/AppFiles.wixobj packaging/windows/AppFiles.wxs
-            & "$wixPath\light.exe" -ext WixUIExtension packaging/windows/installer.wixobj packaging/windows/AppFiles.wixobj -o dist/mininote-windows-x64.msi
+            & "$wixPath\light.exe" -ext WixUIExtension `
+              packaging/windows/installer.wixobj packaging/windows/AppFiles.wixobj `
+              -o dist/mininote-windows-x64.msi
+            Write-Host "MSI built successfully."
           } else {
-            Write-Warning "WiX Toolset not found"
+            Write-Error "WiX Toolset not found - MSI build failed"
+            exit 1
           }
 
           # 4. MSIX Windows Store Package
