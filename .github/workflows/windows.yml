@@ -109,15 +109,17 @@ jobs:
           if ($wixBin) {
             Write-Host "Using WiX from: $wixBin"
 
+            # -Win64 marks all harvested components as 64-bit (matches ProgramFiles64Folder)
             & "$wixBin\heat.exe" dir $releaseDir `
-              -cg ProductComponents -dr INSTALLFOLDER -sreg -srd -gg -sfrag `
+              -cg ProductComponents -dr INSTALLFOLDER -sreg -srd -gg -sfrag -Win64 `
               -out packaging/windows/AppFiles.wxs
             if ($LASTEXITCODE -ne 0) { Write-Error "heat.exe failed"; exit 1 }
 
-            & "$wixBin\candle.exe" -o packaging/windows/installer.wixobj packaging/windows/installer.wxs
+            # -arch x64 required when targeting 64-bit directories
+            & "$wixBin\candle.exe" -arch x64 -o packaging/windows/installer.wixobj packaging/windows/installer.wxs
             if ($LASTEXITCODE -ne 0) { Write-Error "candle installer.wxs failed"; exit 1 }
 
-            & "$wixBin\candle.exe" -o packaging/windows/AppFiles.wixobj packaging/windows/AppFiles.wxs
+            & "$wixBin\candle.exe" -arch x64 -o packaging/windows/AppFiles.wixobj packaging/windows/AppFiles.wxs
             if ($LASTEXITCODE -ne 0) { Write-Error "candle AppFiles.wxs failed"; exit 1 }
 
             # -b tells light.exe where to resolve SourceDir (the harvested file root)
