@@ -266,14 +266,6 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
-    strategy:
-      max-parallel: 1
-      fail-fast: true
-      matrix:
-        include:
-          - arch: arm64
-          - arch: armhf
-          - arch: amd64
 
     steps:
       - name: Checkout
@@ -286,11 +278,12 @@ jobs:
           python3 -m pip install --break-system-packages \
             "clickable-ut==${{ env.CLICKABLE_VERSION }}"
 
-      - name: Download Click artifact (${{ matrix.arch }})
+      - name: Download all Click artifacts
         uses: actions/download-artifact@v4
         with:
-          name: mininotes-ubuntu-touch-${{ matrix.arch }}-click
-          path: dist/click/${{ matrix.arch }}
+          pattern: mininotes-ubuntu-touch-*-click
+          path: dist/clicks
+          merge-multiple: true
 
       - name: Download release notes
         uses: actions/download-artifact@v4
@@ -298,67 +291,33 @@ jobs:
           name: mininotes-release-notes
           path: .ci/release-notes
 
-      - name: Restore click for clickable publish lookup
+      - name: Prepare click files for GitHub & OpenStore
         run: |
           set -euxo pipefail
-          ARCH="${{ matrix.arch }}"
-          CLICK_FILE="$(find dist/click/${ARCH} -name '*.click' | head -1)"
-          test -f "$CLICK_FILE"
+          mkdir -p dist/click
+          cp -f dist/clicks/*.click dist/click/ || true
+          ls -lh dist/click/
 
-          # Extract version from manifest.json
-          # .click is a Debian binary package (ar archive containing control.tar.gz + data.tar.gz) or can be read via manifest.json directly
-          VERSION="$(python3 -c "import json; print(json.load(open('packaging/click/manifest.json'))['version'])")"
-
-          # If click tool is available, verify click info
-          if command -v click &>/dev/null; then
-            click info "$CLICK_FILE" || true
-          fi
-
-          mkdir -p "build/${ARCH}/app"
-          cp "$CLICK_FILE" "build/${ARCH}/app/mininotes_${VERSION}_${ARCH}.click"
-          cp "$CLICK_FILE" "build/mininotes_${VERSION}_${ARCH}.click"
-          echo "CLICK_FILE=$CLICK_FILE" >> "$GITHUB_ENV"
-          echo "CLICK_VERSION=$VERSION"  >> "$GITHUB_ENV"
-
-      - name: Upload Click to GitHub Release
+      - name: Upload All Click Packages to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           TAG="$GITHUB_REF_NAME"
           REPO="$GITHUB_REPOSITORY"
+          FILES=$(find dist/click -name "*.click")
 
           if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
-            gh release upload "$TAG" "$CLICK_FILE" --repo "$REPO" --clobber
+            gh release upload "$TAG" $FILES --repo "$REPO" --clobber
           else
-            gh release create "$TAG" "$CLICK_FILE" \
+            gh release create "$TAG" $FILES \
               --repo "$REPO" \
               --title "MiniNote $TAG" \
               --notes-file .ci/release-notes/release-notes.md
           fi
 
-      - name: Publish to OpenStore via clickable publish
+      - name: Publish to OpenStore
         env:
           OPENSTORE_API_KEY: ${{ secrets.OPENSTORE_API_KEY }}
-          CLICKABLE_NON_INTERACTIVE: "1"
         run: |
-          set -euo pipefail
-
-          test -n "${OPENSTORE_API_KEY:-}" || {
-            echo "::error::GitHub Actions secret OPENSTORE_API_KEY is not set"
-            exit 1
-          }
-
-          ARCH="${{ matrix.arch }}"
-          CHANGELOG="$(cat .ci/release-notes/release-notes.md)"
-          test -n "$CHANGELOG"
-
-          echo "Publishing to OpenStore (arch=$ARCH) with changelog:"
-          printf '%s\n' "$CHANGELOG"
-
-          # clickable publish is the same mechanism that successfully published v1.0.0
-          if [ "$ARCH" = "arm64" ]; then
-            clickable publish --arch "$ARCH" "$CHANGELOG"
-          else
-            clickable publish --arch "$ARCH" "$CHANGELOG"
-          fi
+          python3 scripts/publish_openstore.py
