@@ -27,7 +27,7 @@ env:
 
 jobs:
   linux:
-    name: Linux Desktop x64
+    name: Linux Packages (.tar.gz, .deb)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -43,7 +43,8 @@ jobs:
             cmake \
             libgtk-3-dev \
             ninja-build \
-            pkg-config
+            pkg-config \
+            dpkg-dev
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -71,7 +72,7 @@ jobs:
         run: flutter build linux --release
         working-directory: flutter_app
 
-      - name: Package Linux bundle
+      - name: Package Linux Standalone Bundle (.tar.gz)
         run: |
           set -euo pipefail
           cp native_core/target/release/libnative_core.so \
@@ -82,11 +83,62 @@ jobs:
             bundle
           test -f dist/mininote-linux-x64.tar.gz
 
-      - name: Upload Linux artifact
+      - name: Package Debian Package (.deb)
+        run: |
+          set -euo pipefail
+          DEB_ROOT="build/deb_root"
+          rm -rf "$DEB_ROOT"
+          mkdir -p "$DEB_ROOT/DEBIAN"
+          mkdir -p "$DEB_ROOT/usr/bin"
+          mkdir -p "$DEB_ROOT/usr/lib/mininote"
+          mkdir -p "$DEB_ROOT/usr/share/applications"
+          mkdir -p "$DEB_ROOT/usr/share/icons/hicolor/scalable/apps"
+
+          cp -R flutter_app/build/linux/x64/release/bundle/* "$DEB_ROOT/usr/lib/mininote/"
+          cp native_core/target/release/libnative_core.so "$DEB_ROOT/usr/lib/mininote/libnative_core.so"
+          mkdir -p "$DEB_ROOT/usr/lib/mininote/lib"
+          cp native_core/target/release/libnative_core.so "$DEB_ROOT/usr/lib/mininote/lib/libnative_core.so"
+
+          cat > "$DEB_ROOT/usr/bin/mininote" << 'EOF'
+#!/bin/bash
+exec /usr/lib/mininote/mininote "$@"
+EOF
+          chmod +x "$DEB_ROOT/usr/bin/mininote"
+
+          cat > "$DEB_ROOT/usr/share/applications/io.github.ahmadabdelbary2001.mininote.desktop" << 'EOF'
+[Desktop Entry]
+Name=MiniNote
+Comment=MiniNote cross-platform notes app powered by Flutter + Rust
+Exec=/usr/bin/mininote
+Icon=io.github.ahmadabdelbary2001.mininote
+Terminal=false
+Type=Application
+Categories=Utility;TextEditor;
+EOF
+
+          cp assets/icons/mininotes.svg "$DEB_ROOT/usr/share/icons/hicolor/scalable/apps/io.github.ahmadabdelbary2001.mininote.svg"
+
+          cat > "$DEB_ROOT/DEBIAN/control" << EOF
+Package: mininote
+Version: 1.0.2
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: Ahmad Abdelbary <ahmadabdelbary2001@github.com>
+Description: MiniNote - Fast offline notes app powered by Flutter and Rust FFI.
+EOF
+
+          dpkg-deb --build "$DEB_ROOT" dist/mininote_1.0.2_amd64.deb
+          test -f dist/mininote_1.0.2_amd64.deb
+          ls -lh dist/
+
+      - name: Upload Linux artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mininote-linux-x64
-          path: dist/mininote-linux-x64.tar.gz
+          name: mininote-linux-packages
+          path: |
+            dist/*.tar.gz
+            dist/*.deb
           if-no-files-found: error
           retention-days: 30
 
@@ -98,7 +150,7 @@ jobs:
           set -euo pipefail
           TAG="$GITHUB_REF_NAME"
           REPO="$GITHUB_REPOSITORY"
-          FILES=$(find dist -type f -name "*.tar.gz")
+          FILES=$(find dist -type f \( -name "*.tar.gz" -o -name "*.deb" \))
 
           if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
             gh release upload "$TAG" $FILES --repo "$REPO" --clobber

@@ -29,7 +29,7 @@ env:
 
 jobs:
   windows:
-    name: Windows x64
+    name: Windows x64 (EXE, MSI, MSIX, ZIP)
     runs-on: windows-2022
     timeout-minutes: 45
 
@@ -63,7 +63,11 @@ jobs:
         run: flutter build windows --release
         working-directory: flutter_app
 
-      - name: Package Windows bundle (.zip, .exe, .msi)
+      - name: Build Windows Store MSIX Package
+        run: dart run msix:create --release
+        working-directory: flutter_app
+
+      - name: Package Windows bundles (.zip, .exe, .msi, .msix)
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
@@ -94,6 +98,14 @@ jobs:
           } else {
             Write-Warning "WiX Toolset not found"
           }
+
+          # 4. MSIX Windows Store Package
+          $msixSource = Get-ChildItem -Recurse -Filter "*.msix" -Path "flutter_app/build/windows" | Select-Object -First 1
+          if ($msixSource) {
+            Copy-Item $msixSource.FullName "dist/mininote-windows-x64.msix" -Force
+          }
+
+          Get-ChildItem -Path dist
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
