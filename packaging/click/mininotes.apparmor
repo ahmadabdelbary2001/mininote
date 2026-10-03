@@ -1,6 +1,7 @@
 {
     "policy_groups": [
-        "networking"
+        "networking",
+        "video"
     ],
     "policy_version": 20.04
 }

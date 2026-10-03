@@ -14,7 +14,14 @@ class NoteService {
       throw UnsupportedError('MiniNote FFI is not supported on web.');
     }
 
-    final dir = await getApplicationDocumentsDirectory();
+    Directory dir;
+    final xdgData = Platform.environment['XDG_DATA_HOME'];
+    if (Platform.isLinux && xdgData != null && xdgData.isNotEmpty) {
+      dir = Directory(xdgData);
+    } else {
+      dir = await getApplicationDocumentsDirectory();
+    }
+
     if (!await dir.exists()) {
       await dir.create(recursive: true);
     }

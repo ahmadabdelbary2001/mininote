@@ -1,10 +1,10 @@
 [Desktop Entry]
 Name=MiniNote
-Comment=MiniNote cross-platform notes app powered by Flutter + Rust
+Comment=MiniNote — Fast offline notes powered by Flutter + Rust
 Exec=mininote-wrapper %U
 Icon=assets/icons/mininotes.svg
 Terminal=false
 Type=Application
 X-Ubuntu-Touch=true
-X-Ubuntu-XMir-Enable=true
+X-Ubuntu-XMir-Enable=false
 X-Ubuntu-Supported-Orientations=primary-portrait;portrait-inverted;landscape-primary;landscape-secondary

@@ -1,9 +1,75 @@
 #!/bin/bash
+# MiniNotes Ubuntu Touch launch wrapper
+# Sets up the confined environment (Wayland, XDG dirs, library paths)
+# then execs the Rust runner binary.
 set -e
 HERE="$(dirname "$(readlink -f "${0}")")"
-export LD_LIBRARY_PATH="${HERE}/lib:${HERE}:${LD_LIBRARY_PATH}"
+
+# ── Library & binary paths ─────────────────────────────────────────────────
+export LD_LIBRARY_PATH="${HERE}/lib:${HERE}:${LD_LIBRARY_PATH:-}"
 export PATH="${HERE}:${PATH}"
+
+# ── Wayland / EGL platform ────────────────────────────────────────────────
 export EGL_PLATFORM="wayland"
 export XDG_SESSION_TYPE="wayland"
 export FLUTTER_BUNDLE_DIR="${HERE}"
+
+# ── Ubuntu Touch AppArmor confinement ─────────────────────────────────────
+# Confined packages can only write to:
+#   $HOME/.local/share/<pkg>  (data)
+#   $HOME/.cache/<pkg>        (cache)
+if [ -n "${APP_ID:-}" ]; then
+    PKG_NAME="${APP_ID%%_*}"
+else
+    PKG_NAME="mininotes"
+fi
+
+export XDG_DATA_HOME="${HOME}/.local/share/${PKG_NAME}"
+export XDG_CACHE_HOME="${HOME}/.cache/${PKG_NAME}"
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+mkdir -p "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}"
+
+# ── Diagnostic / debug mode ───────────────────────────────────────────────
+if [ "${MININOTE_DEBUG:-0}" = "1" ] || [ "${DEBUG:-0}" = "1" ]; then
+    export FLUTTER_LOG_LEVELS="${FLUTTER_LOG_LEVELS:-TRACE}"
+    echo "=== [MiniNotes Diagnostic Startup] ==="
+    echo "  APP_ID:           ${APP_ID:-<unset>}"
+    echo "  BUNDLE_DIR:       ${FLUTTER_BUNDLE_DIR}"
+    echo "  XDG_DATA_HOME:    ${XDG_DATA_HOME}"
+    echo "  XDG_CACHE_HOME:   ${XDG_CACHE_HOME}"
+    echo "  XDG_RUNTIME_DIR:  ${XDG_RUNTIME_DIR}"
+    echo "  WAYLAND_DISPLAY:  ${WAYLAND_DISPLAY:-<unset>}"
+    echo "  LOG_LEVEL:        ${FLUTTER_LOG_LEVELS}"
+    echo ""
+    echo "  === Runtime library check ==="
+    for lib in \
+        "${HERE}/lib/libflutter_engine.so" \
+        "${HERE}/lib/libflutter_elinux_wayland.so" \
+        "${HERE}/lib/libnative_core.so"; do
+        if [ -f "$lib" ]; then
+            echo "  [OK]     $lib"
+        else
+            echo "  [MISS]   $lib  ← MISSING — app will crash!"
+        fi
+    done
+    if [ -f "${HERE}/lib/libapp.so" ]; then
+        echo "  [OK]     ${HERE}/lib/libapp.so  (AOT release build)"
+    else
+        echo "  [INFO]   ${HERE}/lib/libapp.so  not present (JIT/debug mode)"
+    fi
+    echo "  === Flutter assets check ==="
+    if [ -d "${HERE}/data/flutter_assets" ]; then
+        echo "  [OK]     data/flutter_assets exists"
+    else
+        echo "  [MISS]   data/flutter_assets MISSING — engine will abort!"
+    fi
+    if [ -f "${HERE}/data/icudtl.dat" ]; then
+        echo "  [OK]     data/icudtl.dat exists"
+    else
+        echo "  [MISS]   data/icudtl.dat MISSING — ICU init will fail!"
+    fi
+    echo "======================================="
+fi
+
+# ── Launch ────────────────────────────────────────────────────────────────
 exec "${HERE}/mininote" "$@"

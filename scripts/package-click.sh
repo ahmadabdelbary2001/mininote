@@ -14,7 +14,9 @@ fi
 ROOT_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 
 if [ -z "$VERSION" ]; then
-    VERSION="$(grep -m1 '^version:' "$ROOT_DIR/flutter_app/pubspec.yaml" | sed -E 's/^version:[[:space:]]*//; s/\+.*//')"
+    # Strip the build-number suffix (+N) and any trailing whitespace
+    VERSION="$(grep -m1 '^version:' "$ROOT_DIR/flutter_app/pubspec.yaml" \
+        | sed -E 's/^version:[[:space:]]*//; s/\+[0-9]+//; s/[[:space:]]*$//')"
 fi
 
 echo "Packaging MiniNotes v${VERSION} for ${ARCH}..."
@@ -36,9 +38,15 @@ fi
 if [ -d "$ELINUX_BUNDLE" ]; then
     echo "Copying Flutter bundle from $ELINUX_BUNDLE..."
     cp -r "$ELINUX_BUNDLE/data" "$BUNDLE_DIR/"
+    # Copy AOT library (libapp.so) and any other native libs from the elinux bundle
     if [ -d "$ELINUX_BUNDLE/lib" ]; then
         cp -a "$ELINUX_BUNDLE/lib/"*.so "$BUNDLE_DIR/lib/" 2>/dev/null || true
     fi
+elif [ -d "$ROOT_DIR/flutter_app/build/flutter_assets" ]; then
+    # Fallback: use flutter_assets from standard `flutter build bundle` output
+    echo "Falling back to flutter_app/build/flutter_assets..."
+    mkdir -p "$BUNDLE_DIR/data"
+    cp -r "$ROOT_DIR/flutter_app/build/flutter_assets" "$BUNDLE_DIR/data/"
 fi
 
 # Fallback/explicit ICU and Assets check
@@ -130,11 +138,23 @@ sed -e "s/ARCH_PLACEHOLDER/${ARCH}/g" \
 # 7. Package using click tool
 mkdir -p "$ROOT_DIR/dist"
 echo "Running click build for $ARCH..."
-click build "$BUNDLE_DIR"
+# click build outputs the .click file to the current directory.
+# We change to $ROOT_DIR/dist so the file lands there directly.
+(
+    cd "$ROOT_DIR/dist"
+    click build "$BUNDLE_DIR" --output "$ROOT_DIR/dist"
+)
 
-CLICK_FILE="$(find . -maxdepth 1 -name '*.click' | head -1)"
-if [ -f "$CLICK_FILE" ]; then
-    FINAL_NAME="$ROOT_DIR/dist/mininotes_${VERSION}_${ARCH}.click"
-    mv "$CLICK_FILE" "$FINAL_NAME"
+FINAL_NAME="$ROOT_DIR/dist/mininotes_${VERSION}_${ARCH}.click"
+# Normalise whatever click produced to the canonical name
+GENERATED="$(find "$ROOT_DIR/dist" -name '*.click' -newer "$BUNDLE_DIR" | head -1)"
+if [ -n "$GENERATED" ] && [ "$GENERATED" != "$FINAL_NAME" ]; then
+    mv "$GENERATED" "$FINAL_NAME"
+fi
+if [ -f "$FINAL_NAME" ]; then
     echo "Click package successfully built at: $FINAL_NAME"
+else
+    echo "ERROR: Expected click package not found at $FINAL_NAME" >&2
+    ls -lh "$ROOT_DIR/dist/"
+    exit 1
 fi

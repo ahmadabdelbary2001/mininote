@@ -9,7 +9,7 @@
             "desktop": "mininotes.desktop"
         }
     },
-    "version": "1.0.3",
+    "version": "1.0.4",
     "maintainer": "Ahmad Abdelbary <ahmadabdelbary2001@github.com>",
     "framework": "ubuntu-sdk-20.04"
 }

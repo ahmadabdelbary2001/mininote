@@ -103,7 +103,7 @@ jobs:
     name: Build Click (${{ matrix.arch }})
     needs: []
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -137,15 +137,31 @@ jobs:
             libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev \
             libinput-dev libudev-dev wayland-protocols \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
+            gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
+            unzip curl
           python3 -m pip install --break-system-packages \
             "clickable-ut==${{ env.CLICKABLE_VERSION }}"
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
-          cache: true
+      # ── Flutter: manual install to guarantee version+architecture match ──
+      # subosito/flutter-action fails to resolve flutter 3.41.7 for arm64
+      # host runners (which are always x86_64). We install Flutter from the
+      # official SDK tarball directly — this gives us the exact version and
+      # the correct host-arch gen_snapshot binary.
+      - name: Install Flutter ${{ env.FLUTTER_VERSION }} (manual)
+        run: |
+          set -euo pipefail
+          FLUTTER_TAR="flutter_linux_${{ env.FLUTTER_VERSION }}-stable.tar.xz"
+          FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/${FLUTTER_TAR}"
+          echo "Downloading Flutter SDK: $FLUTTER_URL"
+          curl -sSLf "$FLUTTER_URL" -o "/tmp/${FLUTTER_TAR}"
+          sudo tar -xf "/tmp/${FLUTTER_TAR}" -C /opt
+          echo "/opt/flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Flutter precache (Linux artifacts)
+        run: |
+          set -euo pipefail
+          flutter precache --linux
+          flutter --version
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -160,22 +176,35 @@ jobs:
             flutter_embedder -> target
             flutter_app/elinux/runner -> target
 
-      - name: Run Flutter & Rust Unit Tests
+      # ── Unit tests: Rust (host only) + Flutter ──────────────────────────
+      # Rust cross-compilation tests require a cross-runner; we only run
+      # `cargo check` for the cross targets (not `cargo test`) to keep CI fast.
+      - name: Run Unit Tests (Rust host + Flutter)
         run: |
           set -euo pipefail
+          # Native Rust tests (host arch, always safe)
           cargo test --manifest-path native_core/Cargo.toml
-          cargo check --manifest-path flutter_embedder/Cargo.toml
-          cargo check --manifest-path flutter_app/elinux/runner/Cargo.toml
+          # Syntax/type-check the cross-target crates without running them
+          cargo check \
+            --manifest-path flutter_embedder/Cargo.toml \
+            --target ${{ matrix.rust_target }}
+          cargo check \
+            --manifest-path flutter_app/elinux/runner/Cargo.toml \
+            --target ${{ matrix.rust_target }}
+          # Flutter unit tests
           (cd flutter_app && flutter test)
+        env:
+          ${{ matrix.target_env_var }}: ${{ matrix.linker }}
 
+      # ── Full application build ───────────────────────────────────────────
       - name: Build MiniNotes App and Click Package (${{ matrix.arch }})
         env:
           ARCH: ${{ matrix.arch }}
           RUST_TARGET: ${{ matrix.rust_target }}
           LINKER: ${{ matrix.linker }}
+          ${{ matrix.target_env_var }}: ${{ matrix.linker }}
         run: |
           set -euo pipefail
-          export ${{ matrix.target_env_var }}="${{ matrix.linker }}"
           chmod +x scripts/*.sh
           bash scripts/build-app.sh "${{ matrix.arch }}"
 
@@ -189,7 +218,7 @@ jobs:
           click info "$CLICK_FILE"
 
           if command -v clickable &>/dev/null; then
-            clickable review "$CLICK_FILE" || echo "clickable review advisory"
+            clickable review "$CLICK_FILE" || echo "clickable review advisory (non-fatal)"
           fi
 
       - name: Upload Click artifact

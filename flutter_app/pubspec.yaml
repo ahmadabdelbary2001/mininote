@@ -1,7 +1,7 @@
 name: mininote
 description: MiniNote – Cross-platform notes app powered by Flutter + Rust (FFI).
 publish_to: 'none'
-version: 1.0.3+1
+version: 1.0.4+1
 
 environment:
   sdk: '>=3.0.0 <4.0.0'

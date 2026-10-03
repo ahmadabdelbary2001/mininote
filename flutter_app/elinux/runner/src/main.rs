@@ -10,16 +10,26 @@ use flutter_embedder::{
 /// Standard path_provider falls back to the executable name if GApplication isn't present.
 /// We explicitly set XDG_DATA_HOME and XDG_CACHE_HOME to the confined package path.
 fn setup_confined_xdg_dirs() {
-    if let (Ok(app_id), Ok(home)) = (env::var("APP_ID"), env::var("HOME")) {
-        let package = app_id.split('_').next().unwrap_or("");
-        if !package.is_empty() {
-            let data_home = format!("{}/.local/share/{}", home, package);
-            let cache_home = format!("{}/.cache/{}", home, package);
-            unsafe {
-                env::set_var("XDG_DATA_HOME", data_home);
-                env::set_var("XDG_CACHE_HOME", cache_home);
-            }
-        }
+    let home = env::var("HOME").unwrap_or_default();
+    if home.is_empty() {
+        return;
+    }
+
+    let package = if let Ok(app_id) = env::var("APP_ID") {
+        app_id.split('_').next().unwrap_or("mininotes").to_string()
+    } else {
+        "mininotes".to_string()
+    };
+
+    let data_home = format!("{}/.local/share/{}", home, package);
+    let cache_home = format!("{}/.cache/{}", home, package);
+
+    let _ = std::fs::create_dir_all(&data_home);
+    let _ = std::fs::create_dir_all(&cache_home);
+
+    unsafe {
+        env::set_var("XDG_DATA_HOME", data_home);
+        env::set_var("XDG_CACHE_HOME", cache_home);
     }
 }
 
@@ -55,11 +65,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     setup_confined_xdg_dirs();
 
+    let is_debug = env::var("MININOTE_DEBUG").map(|v| v == "1").unwrap_or(false)
+        || env::var("DEBUG").map(|v| v == "1").unwrap_or(false);
+
     let bundle_dir = resolve_bundle_dir();
+    if is_debug {
+        eprintln!("[mininote runner] Resolved bundle dir: {:?}", bundle_dir);
+    }
+
     let project_config = DartProjectConfig::from_bundle_dir(&bundle_dir);
 
-    // Initialize Flutter Engine
-    let engine = FlutterEngine::new(project_config)?;
+    // Initialize Flutter Engine with descriptive logging
+    let engine = match FlutterEngine::new(project_config) {
+        Ok(e) => e,
+        Err(err) => {
+            eprintln!("[mininote runner ERROR] Failed to initialize Flutter Engine: {err}");
+            eprintln!("  Bundle path: {:?}", bundle_dir);
+            eprintln!("  Assets exist: {}", bundle_dir.join("data").join("flutter_assets").exists());
+            eprintln!("  ICU data exists: {}", bundle_dir.join("data").join("icudtl.dat").exists());
+            return Err(err.into());
+        }
+    };
 
     // Configure Wayland view for Ubuntu Touch / Lomiri
     let view_config = ViewConfig {
@@ -74,8 +100,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create View Controller and run event loop
-    let controller = FlutterViewController::new(&view_config, engine)?;
+    let controller = match FlutterViewController::new(&view_config, engine) {
+        Ok(c) => c,
+        Err(err) => {
+            eprintln!("[mininote runner ERROR] Failed to create Wayland View Controller: {err}");
+            eprintln!("  WAYLAND_DISPLAY: {:?}", env::var("WAYLAND_DISPLAY"));
+            eprintln!("  XDG_RUNTIME_DIR: {:?}", env::var("XDG_RUNTIME_DIR"));
+            return Err(err.into());
+        }
+    };
+
+    if is_debug {
+        eprintln!("[mininote runner] Entering event loop...");
+    }
+
     controller.run_event_loop();
+
+    if is_debug {
+        eprintln!("[mininote runner] Event loop exited cleanly.");
+    }
 
     Ok(())
 }
