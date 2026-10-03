@@ -147,6 +147,10 @@ jobs:
       # host runners (which are always x86_64). We install Flutter from the
       # official SDK tarball directly — this gives us the exact version and
       # the correct host-arch gen_snapshot binary.
+      #
+      # IMPORTANT: extract to $HOME (not /opt) so the runner user owns
+      # all files. Flutter writes engine.stamp, cache/, etc. at runtime
+      # and will fail with "Permission denied" if those paths are root-owned.
       - name: Install Flutter ${{ env.FLUTTER_VERSION }} (manual)
         run: |
           set -euo pipefail
@@ -154,12 +158,16 @@ jobs:
           FLUTTER_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/${FLUTTER_TAR}"
           echo "Downloading Flutter SDK: $FLUTTER_URL"
           curl -sSLf "$FLUTTER_URL" -o "/tmp/${FLUTTER_TAR}"
-          sudo tar -xf "/tmp/${FLUTTER_TAR}" -C /opt
-          echo "/opt/flutter/bin" >> "$GITHUB_PATH"
+          # Extract as current user (no sudo) to a user-writable path
+          tar -xf "/tmp/${FLUTTER_TAR}" -C "${HOME}" --no-same-owner
+          rm -f "/tmp/${FLUTTER_TAR}"
+          echo "${HOME}/flutter/bin" >> "$GITHUB_PATH"
 
       - name: Flutter precache (Linux artifacts)
         run: |
           set -euo pipefail
+          # Ensure the cache directory is writable before Flutter touches it
+          mkdir -p "${HOME}/flutter/bin/cache"
           flutter precache --linux
           flutter --version
 
