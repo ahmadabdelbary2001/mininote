@@ -1,6 +1,9 @@
 #!/bin/bash
+set -e
 HERE="$(dirname "$(readlink -f "${0}")")"
 export LD_LIBRARY_PATH="${HERE}/lib:${HERE}:${LD_LIBRARY_PATH}"
-export GDK_BACKEND="wayland,x11"
 export PATH="${HERE}:${PATH}"
+export EGL_PLATFORM="wayland"
+export XDG_SESSION_TYPE="wayland"
+export FLUTTER_BUNDLE_DIR="${HERE}"
 exec "${HERE}/mininote" "$@"

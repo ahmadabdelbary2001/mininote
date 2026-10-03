@@ -1,0 +1,19 @@
+[package]
+name = "mininote_elinux_runner"
+version = "1.0.4"
+edition = "2024"
+
+[[bin]]
+name = "mininote"
+path = "src/main.rs"
+
+[dependencies]
+flutter_embedder = { path = "../../../flutter_embedder" }
+libc = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

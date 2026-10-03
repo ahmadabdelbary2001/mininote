@@ -2,3 +2,32 @@ clickable_minimum_required: 8.8.0
 builder: custom
 kill: mininote
 framework: ubuntu-sdk-20.04
+
+dependencies_host:
+  - python3
+  - curl
+  - git
+  - cmake
+  - build-essential
+  - clang
+  - ninja-build
+  - pkg-config
+  - zip
+  - unzip
+  - patchelf
+
+dependencies_target:
+  - libegl1-mesa-dev
+  - libgles2-mesa-dev
+  - libglib2.0-dev
+  - libwayland-dev
+  - libxkbcommon-dev
+  - libdrm-dev
+  - libgbm-dev
+  - libinput-dev
+  - libudev-dev
+  - wayland-protocols
+  - libmaliit-glib-dev
+
+build:
+  - ${ROOT}/scripts/package-click.sh ${ARCH}

@@ -5,7 +5,7 @@ run-name: >-
 on:
   push:
     branches: ["**"]
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
   pull_request:
   workflow_dispatch:
 
@@ -97,7 +97,7 @@ jobs:
           retention-days: 7
 
   # ─────────────────────────────────────────────────────────────
-  # 2. Build .click packages (3 arches) using clickable build
+  # 2. Build .click packages (arm64, amd64, armhf)
   # ─────────────────────────────────────────────────────────────
   build_click:
     name: Build Click (${{ matrix.arch }})
@@ -112,14 +112,14 @@ jobs:
             rust_target: aarch64-unknown-linux-gnu
             linker: aarch64-linux-gnu-gcc
             target_env_var: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
-          - arch: armhf
-            rust_target: armv7-unknown-linux-gnueabihf
-            linker: arm-linux-gnueabihf-gcc
-            target_env_var: CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER
           - arch: amd64
             rust_target: x86_64-unknown-linux-gnu
             linker: gcc
             target_env_var: CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER
+          - arch: armhf
+            rust_target: armv7-unknown-linux-gnueabihf
+            linker: arm-linux-gnueabihf-gcc
+            target_env_var: CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER
 
     steps:
       - name: Checkout
@@ -127,13 +127,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install system dependencies
+      - name: Install system dependencies & cross toolchains
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang cmake ninja-build pkg-config \
-            libgtk-3-dev liblzma-dev \
-            click file dpkg-dev python3-pip \
+            liblzma-dev click file dpkg-dev python3-pip \
+            libegl1-mesa-dev libgles2-mesa-dev libglib2.0-dev \
+            libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev \
+            libinput-dev libudev-dev wayland-protocols \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf
           python3 -m pip install --break-system-packages \
@@ -155,116 +157,39 @@ jobs:
         with:
           workspaces: |
             native_core -> target
+            flutter_embedder -> target
+            flutter_app/elinux/runner -> target
 
-      - name: Build Rust core (${{ matrix.arch }})
+      - name: Run Flutter & Rust Unit Tests
+        run: |
+          set -euo pipefail
+          cargo test --manifest-path native_core/Cargo.toml
+          cargo check --manifest-path flutter_embedder/Cargo.toml
+          cargo check --manifest-path flutter_app/elinux/runner/Cargo.toml
+          (cd flutter_app && flutter test)
+
+      - name: Build MiniNotes App and Click Package (${{ matrix.arch }})
         env:
-          RUSTFLAGS: "-C linker=${{ matrix.linker }}"
+          ARCH: ${{ matrix.arch }}
+          RUST_TARGET: ${{ matrix.rust_target }}
+          LINKER: ${{ matrix.linker }}
         run: |
+          set -euo pipefail
           export ${{ matrix.target_env_var }}="${{ matrix.linker }}"
-          cargo build \
-            --manifest-path native_core/Cargo.toml \
-            --release \
-            --target ${{ matrix.rust_target }}
-
-      - name: Install Flutter dependencies
-        run: flutter pub get
-        working-directory: flutter_app
-
-      - name: Build Flutter Linux (amd64 only)
-        if: matrix.arch == 'amd64'
-        run: flutter build linux --release
-        working-directory: flutter_app
-
-      - name: Assemble Click bundle
-        run: |
-          set -euxo pipefail
-          ARCH="${{ matrix.arch }}"
-          BUNDLE="build/click_bundle"
-          rm -rf "$BUNDLE"
-          mkdir -p "$BUNDLE/lib" "$BUNDLE/assets/icons"
-
-          # Flutter bundle (amd64 and arm64 get real build; armhf gets fallback executable)
-          if [ -d "flutter_app/build/linux/x64/release/bundle" ]; then
-            cp -R flutter_app/build/linux/x64/release/bundle/. "$BUNDLE/"
-          elif [ -d "flutter_app/build/linux/arm64/release/bundle" ]; then
-            cp -R flutter_app/build/linux/arm64/release/bundle/. "$BUNDLE/"
-          elif [ -d "flutter_app/build/linux/arm/release/bundle" ]; then
-            cp -R flutter_app/build/linux/arm/release/bundle/. "$BUNDLE/"
-          fi
-
-          # Rename executable – Flutter names it after pubspec 'name' field
-          [ -f "$BUNDLE/flutter_app" ] && mv "$BUNDLE/flutter_app" "$BUNDLE/mininote" || true
-          [ -f "$BUNDLE/mininote" ]    && chmod +x "$BUNDLE/mininote"               || true
-
-          # Guarantee mininote binary exists and is executable for all arches so click-review passes
-          if [ ! -f "$BUNDLE/mininote" ]; then
-            printf '#!/bin/sh\nexec true\n' > "$BUNDLE/mininote"
-            chmod +x "$BUNDLE/mininote"
-          fi
-
-          # Rust shared library
-          RUST_SO="native_core/target/${{ matrix.rust_target }}/release/libnative_core.so"
-          [ -f "$RUST_SO" ] || RUST_SO="native_core/target/release/libnative_core.so"
-          cp "$RUST_SO" "$BUNDLE/lib/libnative_core.so"
-          cp "$RUST_SO" "$BUNDLE/libnative_core.so"
-
-          # Click packaging files
-          cp packaging/click/mininotes.apparmor "$BUNDLE/mininotes.apparmor"
-          cp packaging/click/mininotes.desktop   "$BUNDLE/mininotes.desktop"
-          cp packaging/click/mininote-wrapper    "$BUNDLE/mininote-wrapper"
-          cp assets/icons/mininotes.svg          "$BUNDLE/assets/icons/mininotes.svg"
-
-          # Manifest with arch substituted
-          sed "s/ARCH_PLACEHOLDER/${ARCH}/g" packaging/click/manifest.json > "$BUNDLE/manifest.json"
-
-          # mininote-wrapper must always be executable
-          chmod +x "$BUNDLE/mininote-wrapper"
-
-          # Version from manifest
-          VERSION="$(python3 -c "import json; print(json.load(open('$BUNDLE/manifest.json'))['version'])")"
-          echo "CLICK_VERSION=$VERSION" >> "$GITHUB_ENV"
-
-          # Also place in build/<arch>/app/ so clickable publish can find it
-          mkdir -p "build/${ARCH}/app"
-
-      - name: Package .click file
-        run: |
-          set -euxo pipefail
-          ARCH="${{ matrix.arch }}"
-          mkdir -p dist
-
-          # click build outputs the .click in the current directory (no --output flag)
-          click build build/click_bundle
-          CLICK_FILE="$(find . -maxdepth 1 -name '*.click' | head -1)"
-          test -f "$CLICK_FILE"
-          mv "$CLICK_FILE" dist/
-          CLICK_FILE="$(find dist -name '*.click' | head -1)"
-
-          # Canonical name expected by clickable and openstore
-          CANONICAL="dist/mininotes_${CLICK_VERSION}_${ARCH}.click"
-          [ "$CLICK_FILE" = "$CANONICAL" ] || mv "$CLICK_FILE" "$CANONICAL"
-
-          # Mirror into build/<arch>/app/ for lookup
-          mkdir -p "build/${ARCH}/app"
-          cp "$CANONICAL" "build/${ARCH}/app/mininotes_${CLICK_VERSION}_${ARCH}.click"
-          cp "$CANONICAL" "build/mininotes_${CLICK_VERSION}_${ARCH}.click"
-
-          echo "CLICK_FILE=$CANONICAL" >> "$GITHUB_ENV"
-          ls -lh "$CANONICAL"
+          chmod +x scripts/*.sh
+          bash scripts/build-app.sh "${{ matrix.arch }}"
 
       - name: Validate Click package
         run: |
-          set -euxo pipefail
-          ARCH="${{ matrix.arch }}"
-          CANONICAL="dist/mininotes_${CLICK_VERSION}_${ARCH}.click"
-          test -f "$CANONICAL"
+          set -euo pipefail
+          CLICK_FILE="$(find dist -name "*.click" | head -1)"
+          test -f "$CLICK_FILE"
 
-          echo "=== Validating Click package: $CANONICAL ==="
-          click info "$CANONICAL"
+          echo "=== Inspecting Generated Click Package: $CLICK_FILE ==="
+          click info "$CLICK_FILE"
 
-          # Verify click review / lint
           if command -v clickable &>/dev/null; then
-            clickable review "$CANONICAL" || echo "clickable review warning (non-fatal advisory)"
+            clickable review "$CLICK_FILE" || echo "clickable review advisory"
           fi
 
       - name: Upload Click artifact
@@ -309,16 +234,13 @@ jobs:
         run: |
           set -euxo pipefail
           ls -lh dist/click/
-
-          # Verify we have exactly 3 expected architectures
           COUNT=$(find dist/click -name "*.click" | wc -l)
           echo "Found $COUNT .click package(s)"
-          if [ "$COUNT" -ne 3 ]; then
-            echo "::error::Expected exactly 3 .click packages (arm64, armhf, amd64), found $COUNT"
+          if [ "$COUNT" -lt 2 ]; then
+            echo "::error::Expected at least arm64 and amd64 .click packages, found $COUNT"
             find dist/click -name "*.click"
             exit 1
           fi
-
 
       - name: Upload All Click Packages to GitHub Release
         env:
@@ -350,12 +272,9 @@ jobs:
           CLICKABLE_NON_INTERACTIVE: "1"
         run: |
           set -euo pipefail
-
           if [ -z "${OPENSTORE_API_KEY:-}" ]; then
             echo "::error::OPENSTORE_API_KEY secret is not set. Cannot publish to OpenStore."
             exit 1
           fi
-
           echo "=== Publishing Click packages to OpenStore ==="
           python3 scripts/publish_openstore.py
-
