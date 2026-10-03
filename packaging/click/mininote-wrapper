@@ -12,12 +12,17 @@ export PATH="${HERE}:${PATH}"
 # ── Wayland / EGL platform ────────────────────────────────────────────────
 export EGL_PLATFORM="wayland"
 export XDG_SESSION_TYPE="wayland"
+export GDK_BACKEND="wayland"
+export QT_QPA_PLATFORM="wayland"
+export CLUTTER_BACKEND="wayland"
+export SDL_VIDEODRIVER="wayland"
 export FLUTTER_BUNDLE_DIR="${HERE}"
 
 # ── Ubuntu Touch AppArmor confinement ─────────────────────────────────────
 # Confined packages can only write to:
 #   $HOME/.local/share/<pkg>  (data)
 #   $HOME/.cache/<pkg>        (cache)
+#   $XDG_CACHE_HOME/tmp       (temporary files)
 if [ -n "${APP_ID:-}" ]; then
     PKG_NAME="${APP_ID%%_*}"
 else
@@ -27,7 +32,18 @@ fi
 export XDG_DATA_HOME="${HOME}/.local/share/${PKG_NAME}"
 export XDG_CACHE_HOME="${HOME}/.cache/${PKG_NAME}"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-mkdir -p "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}"
+export TMPDIR="${XDG_CACHE_HOME}/tmp"
+export XDG_DATA_DIRS="${HERE}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+mkdir -p "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}" "${TMPDIR}"
+
+# ── Wayland display detection ─────────────────────────────────────────────
+if [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    if [ -S "${XDG_RUNTIME_DIR}/wayland-0" ]; then
+        export WAYLAND_DISPLAY="wayland-0"
+    elif [ -S "${XDG_RUNTIME_DIR}/wayland-1" ]; then
+        export WAYLAND_DISPLAY="wayland-1"
+    fi
+fi
 
 # ── Diagnostic / debug mode ───────────────────────────────────────────────
 if [ "${MININOTE_DEBUG:-0}" = "1" ] || [ "${DEBUG:-0}" = "1" ]; then

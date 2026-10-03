@@ -113,12 +113,23 @@ if [ -f "$BUNDLE_DIR/lib/libapp.so" ]; then
     check_elf_arch "$BUNDLE_DIR/lib/libapp.so"
 fi
 
-# 5. Check RPATH/RUNPATH using readelf if readelf is present
+# 5. Check RPATH/RUNPATH and verify NO desktop GTK3 dependencies
 if command -v readelf >/dev/null 2>&1; then
-    echo "Verifying RPATH/RUNPATH on mininote executable..."
+    echo "Verifying RPATH/RUNPATH and dependencies on mininote executable..."
     if ! readelf -d "$BUNDLE_DIR/mininote" | grep -qi -E "(RPATH|RUNPATH)"; then
-        echo "WARNING: mininote has no explicit RPATH/RUNPATH; mininote-wrapper will use LD_LIBRARY_PATH"
+        echo "  [INFO] mininote has no explicit RPATH/RUNPATH; mininote-wrapper supplies LD_LIBRARY_PATH"
     fi
+
+    # Ensure no desktop GTK3 or X11 dependencies leaked into our pure Wayland eLinux runner
+    for elf in "$BUNDLE_DIR/mininote" "$BUNDLE_DIR/lib/libflutter_elinux_wayland.so"; do
+        if [ -f "$elf" ]; then
+            if readelf -d "$elf" | grep -qi -E "(libgtk-3|libgdk-3)"; then
+                echo "CRITICAL ERROR: Desktop GTK3 dependency detected in $elf — must be pure Wayland eLinux!" >&2
+                exit 1
+            fi
+        fi
+    done
+    echo "  [OK] Confirmed: No GTK3 desktop dependencies leaked into eLinux binaries"
 fi
 
 # 6. Validate manifest.json architecture

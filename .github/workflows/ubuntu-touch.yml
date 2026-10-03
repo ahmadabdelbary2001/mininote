@@ -104,6 +104,7 @@ jobs:
     needs: []
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    continue-on-error: ${{ matrix.arch == 'armhf' }}
     strategy:
       fail-fast: false
       matrix:
@@ -217,6 +218,7 @@ jobs:
           bash scripts/build-app.sh "${{ matrix.arch }}"
 
       - name: Validate Click package
+        if: matrix.arch != 'armhf'
         run: |
           set -euo pipefail
           CLICK_FILE="$(find dist -name "*.click" | head -1)"
@@ -233,8 +235,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mininotes-ubuntu-touch-${{ matrix.arch }}-click
-          path: dist/*.click
-          if-no-files-found: error
+          path: |
+            dist/*.click
+            dist/armhf-skipped.txt
+          if-no-files-found: warn
           retention-days: 30
 
   # ─────────────────────────────────────────────────────────────

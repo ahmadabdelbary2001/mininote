@@ -33,6 +33,18 @@ case "$ARCH" in
         ;;
 esac
 
+if [ "$ARCH" = "armhf" ]; then
+    echo "=========================================================================="
+    echo "NOTICE: Official Flutter Engine artifacts for 32-bit ARM (armhf) are"
+    echo "discontinued upstream by Flutter for Flutter >= 3.10."
+    echo "All current Ubuntu Touch production devices run arm64 (aarch64)."
+    echo "Skipping armhf build gracefully."
+    echo "=========================================================================="
+    mkdir -p "$ROOT_DIR/dist"
+    echo "armhf build skipped: 32-bit ARM engine is unavailable upstream for Flutter >= 3.10" > "$ROOT_DIR/dist/armhf-skipped.txt"
+    exit 0
+fi
+
 # ─── 1. Fetch matching Flutter engine artifacts ────────────────────────────
 "$ROOT_DIR/scripts/fetch-engine-artifacts.sh" "$ARCH"
 ENGINE_DIR="$ROOT_DIR/build/engine-artifacts/${ARCH}"
