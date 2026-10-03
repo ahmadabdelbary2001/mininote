@@ -60,6 +60,29 @@ fi
 mkdir -p "$SRC_DIR/build"
 cp "$ENGINE_DIR/libflutter_engine.so" "$SRC_DIR/build/libflutter_engine.so"
 
+# ── Export architecture triplet for clang target selection in CMakeLists ───
+case "$ARCH" in
+    arm64)
+        export ARCH_TRIPLET="aarch64-linux-gnu"
+        ;;
+    amd64)
+        export ARCH_TRIPLET="x86_64-linux-gnu"
+        ;;
+    armhf)
+        export ARCH_TRIPLET="arm-linux-gnueabihf"
+        ;;
+esac
+
+# Ensure maliit-glib header paths are accessible for all include formats
+if [ -d "/usr/include/maliit-2/maliit-glib" ] && [ ! -d "/usr/include/maliit-glib" ]; then
+    sudo ln -sf /usr/include/maliit-2/maliit-glib /usr/include/maliit-glib 2>/dev/null || true
+fi
+
+MALIIT_INCLUDES=""
+if [ -d "/usr/include/maliit-2" ]; then
+    MALIIT_INCLUDES="-I/usr/include/maliit-2 -I/usr/include/maliit-2/maliit-glib"
+fi
+
 # ── Configure CMake cross-compilation flags ────────────────────────────────
 CMAKE_BUILD_DIR="$ROOT_DIR/build/embedder-build-${ARCH}"
 rm -rf "$CMAKE_BUILD_DIR"
@@ -68,18 +91,21 @@ mkdir -p "$CMAKE_BUILD_DIR"
 EXTRA_CMAKE_ARGS=()
 if [ "$ARCH" = "arm64" ]; then
     EXTRA_CMAKE_ARGS+=(
-        "-DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc"
-        "-DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++"
         "-DCMAKE_SYSTEM_NAME=Linux"
         "-DCMAKE_SYSTEM_PROCESSOR=aarch64"
+        "-DCMAKE_CXX_FLAGS=${MALIIT_INCLUDES}"
+        "-DCMAKE_C_FLAGS=${MALIIT_INCLUDES}"
+    )
+elif [ "$ARCH" = "amd64" ]; then
+    EXTRA_CMAKE_ARGS+=(
+        "-DCMAKE_CXX_FLAGS=${MALIIT_INCLUDES}"
+        "-DCMAKE_C_FLAGS=${MALIIT_INCLUDES}"
     )
 elif [ "$ARCH" = "armhf" ]; then
     EXTRA_CMAKE_ARGS+=(
-        "-DCMAKE_C_COMPILER=arm-linux-gnueabihf-gcc"
-        "-DCMAKE_CXX_COMPILER=arm-linux-gnueabihf-g++"
         "-DCMAKE_SYSTEM_NAME=Linux"
         "-DCMAKE_SYSTEM_PROCESSOR=arm"
-        "-DCMAKE_CXX_FLAGS=-I/usr/arm-linux-gnueabihf/include/c++/9/arm-linux-gnueabihf"
+        "-DCMAKE_CXX_FLAGS=${MALIIT_INCLUDES} -I/usr/arm-linux-gnueabihf/include/c++/9/arm-linux-gnueabihf"
     )
 fi
 

@@ -137,9 +137,26 @@ jobs:
             libegl1-mesa-dev libgles2-mesa-dev libglib2.0-dev \
             libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev \
             libinput-dev libudev-dev wayland-protocols \
+            libmaliit-glib-dev \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
             unzip curl
+
+          # Ensure maliit-glib header paths are accessible for all include formats
+          if [ -d "/usr/include/maliit-2/maliit-glib" ] && [ ! -d "/usr/include/maliit-glib" ]; then
+            sudo ln -sf /usr/include/maliit-2/maliit-glib /usr/include/maliit-glib || true
+          fi
+
+          # Install arm64 maliit shared library for cross compilation
+          if [ "${{ matrix.arch }}" = "arm64" ]; then
+            mkdir -p /tmp/arm64-maliit
+            curl -sSL "http://ports.ubuntu.com/ubuntu-ports/pool/universe/m/maliit-framework/libmaliit-glib2_2.3.0-4build5_arm64.deb" -o /tmp/arm64-maliit/maliit.deb
+            curl -sSL "http://ports.ubuntu.com/ubuntu-ports/pool/universe/m/maliit-framework/libmaliit-glib-dev_2.3.0-4build5_arm64.deb" -o /tmp/arm64-maliit/maliit-dev.deb
+            sudo dpkg -x /tmp/arm64-maliit/maliit.deb /
+            sudo dpkg -x /tmp/arm64-maliit/maliit-dev.deb /
+            rm -rf /tmp/arm64-maliit
+          fi
+
           python3 -m pip install --break-system-packages \
             "clickable-ut==${{ env.CLICKABLE_VERSION }}"
 
