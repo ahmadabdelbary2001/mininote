@@ -32,6 +32,7 @@ required_files=(
     "lib/libflutter_engine.so"
     "lib/libflutter_elinux_wayland.so"
     "lib/libnative_core.so"
+    "lib/libapp.so"
     "data/icudtl.dat"
 )
 
@@ -109,8 +110,31 @@ check_elf_arch "$BUNDLE_DIR/mininote"
 check_elf_arch "$BUNDLE_DIR/lib/libflutter_engine.so"
 check_elf_arch "$BUNDLE_DIR/lib/libflutter_elinux_wayland.so"
 check_elf_arch "$BUNDLE_DIR/lib/libnative_core.so"
-if [ -f "$BUNDLE_DIR/lib/libapp.so" ]; then
-    check_elf_arch "$BUNDLE_DIR/lib/libapp.so"
+# libapp.so is MANDATORY for production AOT release builds
+if [ ! -f "$BUNDLE_DIR/lib/libapp.so" ]; then
+    echo "CRITICAL ERROR: lib/libapp.so is MISSING — AOT compilation is mandatory for production." >&2
+    echo "               JIT/debug bundles must NOT be packaged or distributed." >&2
+    exit 1
+fi
+check_elf_arch "$BUNDLE_DIR/lib/libapp.so"
+# Additional readelf header check to confirm AOT ELF machine type
+if command -v readelf >/dev/null 2>&1; then
+    LIBAPP_MACHINE="$(readelf -h "$BUNDLE_DIR/lib/libapp.so" 2>/dev/null | grep 'Machine:' | head -1 | xargs)"
+    echo "  [AOT] libapp.so machine header: $LIBAPP_MACHINE"
+    case "$EXPECTED_ARCH" in
+        arm64|aarch64)
+            if ! echo "$LIBAPP_MACHINE" | grep -qi "AArch64"; then
+                echo "CRITICAL ERROR: libapp.so machine type is not AArch64! Got: $LIBAPP_MACHINE" >&2
+                echo "               Wrong gen_snapshot may have been used (x64 AOT in arm64 package)." >&2
+                exit 1
+            fi ;;
+        amd64|x86_64)
+            if ! echo "$LIBAPP_MACHINE" | grep -qi -E "(Advanced Micro Devices|X86-64)"; then
+                echo "CRITICAL ERROR: libapp.so machine type is not x86-64! Got: $LIBAPP_MACHINE" >&2
+                exit 1
+            fi ;;
+    esac
+    echo "  [OK] libapp.so AOT architecture verified: $LIBAPP_MACHINE"
 fi
 
 # 5. Check RPATH/RUNPATH and verify NO desktop GTK3 dependencies

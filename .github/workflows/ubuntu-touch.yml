@@ -133,7 +133,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang cmake ninja-build pkg-config \
-            liblzma-dev click file dpkg-dev pipx \
+            liblzma-dev file dpkg-dev pipx \
             libegl1-mesa-dev libgles2-mesa-dev libglib2.0-dev \
             libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev \
             libinput-dev libudev-dev wayland-protocols \
@@ -147,19 +147,25 @@ jobs:
             sudo ln -sf /usr/include/maliit-2/maliit-glib /usr/include/maliit-glib || true
           fi
 
-          # Configure multiarch and install arm64 target libraries for cross-compilation
+          # Configure multiarch and install arm64 target libraries for cross-compilation.
+          # IMPORTANT: Do NOT install 'click' before this step — multiarch apt-get may remove it.
           if [ "${{ matrix.arch }}" = "arm64" ]; then
             bash scripts/setup-arm64-cross.sh
           fi
 
-          # Install clickable via pipx (isolated venv, robust against host APT multiarch changes)
+          # Install 'click' AFTER multiarch setup to guarantee it is not removed by apt conflict resolution
+          sudo apt-get install -y --no-install-recommends click
+          click --version || { echo "ERROR: 'click' command not found after installation" >&2; exit 1; }
+
+          # Install clickable via pipx (isolated venv, not affected by host APT multiarch changes)
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/bin:$PATH"
           if command -v pipx &>/dev/null; then
-            pipx install "clickable-ut==${{ env.CLICKABLE_VERSION }}" || true
-          elif command -v pip3 &>/dev/null; then
-            pip3 install --break-system-packages "clickable-ut==${{ env.CLICKABLE_VERSION }}" || true
+            pipx install "clickable-ut==${{ env.CLICKABLE_VERSION }}"
+          else
+            echo "WARNING: pipx not available; skipping clickable install" >&2
           fi
+
 
       # ── Flutter: manual install to guarantee version+architecture match ──
       # subosito/flutter-action fails to resolve flutter 3.41.7 for arm64

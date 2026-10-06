@@ -113,7 +113,7 @@ def submit_to_openstore(click_path, api_key, changelog, package_name="mininotes"
             data=bytes(body),
             headers={
                 "Content-Type": f"multipart/form-data; boundary={boundary}",
-                "User-Agent": "clickable-ut/8.10.0 MiniNotes/1.0.3",
+                "User-Agent": "clickable-ut/8.10.0 MiniNotes/1.0.4",
             },
             method="POST"
         )
