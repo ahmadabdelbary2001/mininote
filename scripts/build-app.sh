@@ -80,14 +80,48 @@ RUSTFLAGS="-C linker=$LINKER" cargo build \
     --target "$RUST_TARGET"
 
 # ─── 5. Build Flutter Dart kernel snapshot ────────────────────────────────
+# NOTE: We deliberately do NOT pass --release here.
+# In Flutter 3.x, `flutter build bundle --release` does NOT produce kernel_blob.bin
+# because it assumes AOT will be handled by gen_snapshot internally for known platforms.
+# Since we use a custom eLinux embedder, we invoke gen_snapshot ourselves and need
+# the raw kernel as input. The Dart kernel is architecture-independent — gen_snapshot
+# is what compiles it to native AArch64 or x86-64 AOT machine code.
 echo "Building Flutter assets / kernel snapshot..."
 (
     cd "$ROOT_DIR/flutter_app"
     flutter pub get
-    flutter build bundle --release
+    # flutter build bundle (no --release) reliably writes:
+    #   build/flutter_assets/kernel_blob.bin   ← input to gen_snapshot
+    #   build/flutter_assets/                  ← assets directory
+    flutter build bundle
 )
 
 FLUTTER_BUILD_DIR="$ROOT_DIR/flutter_app/build"
+
+# Locate kernel_blob.bin — search all known Flutter output paths robustly
+KERNEL_SNAPSHOT=""
+KERNEL_CANDIDATES=(
+    "$FLUTTER_BUILD_DIR/flutter_assets/kernel_blob.bin"
+    "$FLUTTER_BUILD_DIR/linux/x64/debug/bundle/flutter_assets/kernel_blob.bin"
+    "$FLUTTER_BUILD_DIR/linux/x64/release/bundle/flutter_assets/kernel_blob.bin"
+    "$FLUTTER_BUILD_DIR/linux/arm64/debug/bundle/flutter_assets/kernel_blob.bin"
+    "$FLUTTER_BUILD_DIR/linux/arm64/release/bundle/flutter_assets/kernel_blob.bin"
+)
+for kc in "${KERNEL_CANDIDATES[@]}"; do
+    if [ -f "$kc" ]; then
+        KERNEL_SNAPSHOT="$kc"
+        echo "  Found kernel_blob.bin at: $KERNEL_SNAPSHOT"
+        break
+    fi
+done
+if [ -z "$KERNEL_SNAPSHOT" ]; then
+    echo "ERROR: kernel_blob.bin not found after 'flutter build bundle'." >&2
+    echo "Searched paths:" >&2
+    for kc in "${KERNEL_CANDIDATES[@]}"; do echo "    $kc" >&2; done
+    echo "Full build tree scan:" >&2
+    find "$FLUTTER_BUILD_DIR" -name "kernel_blob.bin" 2>/dev/null | head -20 >&2 || echo "  (nothing found)" >&2
+    exit 1
+fi
 
 # ─── 6. AOT: compile Dart → libapp.so via gen_snapshot ───────────────────
 # MANDATORY for production release builds.
@@ -188,12 +222,8 @@ if [ -z "$GEN_SNAPSHOT" ]; then
     exit 1
 fi
 
-KERNEL_SNAPSHOT="$FLUTTER_BUILD_DIR/flutter_assets/kernel_blob.bin"
-if [ ! -f "$KERNEL_SNAPSHOT" ]; then
-    echo "ERROR: kernel_blob.bin not found at $KERNEL_SNAPSHOT" >&2
-    echo "       'flutter build bundle --release' must have failed or not been run." >&2
-    exit 1
-fi
+
+
 
 # Verify gen_snapshot is x86-64 (host-runnable on CI x64 runner)
 GEN_SNAP_FILE="$(file "$GEN_SNAPSHOT")"
