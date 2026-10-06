@@ -142,7 +142,7 @@ echo "Running click build for $ARCH..."
 # We change to $ROOT_DIR/dist so the file lands there directly.
 (
     cd "$ROOT_DIR/dist"
-    click build "$BUNDLE_DIR" --output "$ROOT_DIR/dist"
+    click build "$BUNDLE_DIR"
 )
 
 FINAL_NAME="$ROOT_DIR/dist/mininotes_${VERSION}_${ARCH}.click"

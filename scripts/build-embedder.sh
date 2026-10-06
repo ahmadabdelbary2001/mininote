@@ -112,9 +112,12 @@ mkdir -p "$CMAKE_BUILD_DIR"
 
 EXTRA_CMAKE_ARGS=()
 if [ "$ARCH" = "arm64" ]; then
+    export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
+    export PKG_CONFIG_LIBDIR="/usr/lib/aarch64-linux-gnu/pkgconfig"
     EXTRA_CMAKE_ARGS+=(
         "-DCMAKE_SYSTEM_NAME=Linux"
         "-DCMAKE_SYSTEM_PROCESSOR=aarch64"
+        "-DCMAKE_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu"
         "-DCMAKE_CXX_FLAGS=${GLOBAL_CXX_FLAGS}"
         "-DCMAKE_C_FLAGS=${GLOBAL_C_FLAGS}"
     )
