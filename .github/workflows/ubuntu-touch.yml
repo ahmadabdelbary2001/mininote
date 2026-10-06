@@ -155,7 +155,8 @@ jobs:
 
           # Install 'click' AFTER multiarch setup to guarantee it is not removed by apt conflict resolution
           sudo apt-get install -y --no-install-recommends click
-          click --version || { echo "ERROR: 'click' command not found after installation" >&2; exit 1; }
+          command -v click || { echo "ERROR: 'click' command not found after installation" >&2; exit 1; }
+          echo "  [OK] click available at: $(command -v click)"
 
           # Install clickable via pipx (isolated venv, not affected by host APT multiarch changes)
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
