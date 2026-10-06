@@ -51,6 +51,29 @@ if [ ! -d "$BUNDLE_DIR/data/flutter_assets" ]; then
 fi
 echo "  [OK] Found data/flutter_assets"
 
+# Reject JIT-only debug artifacts from release bundles:
+# These are produced by 'flutter build bundle' (JIT mode) and must NOT appear
+# in a production AOT Click package. Their presence means a debug/JIT build
+# was accidentally packaged instead of the AOT release build.
+for debug_artifact in "data/flutter_assets/kernel_blob.bin" \
+                      "data/flutter_assets/vm_snapshot_data" \
+                      "data/flutter_assets/isolate_snapshot_data"; do
+    if [ -f "$BUNDLE_DIR/$debug_artifact" ]; then
+        echo "CRITICAL ERROR: JIT-only artifact found in release bundle: $debug_artifact" >&2
+        echo "               This indicates a debug/JIT build was packaged, not an AOT release." >&2
+        echo "               Remove $debug_artifact before packaging." >&2
+        exit 1
+    fi
+done
+echo "  [OK] No JIT-only debug artifacts in release bundle"
+
+# Also verify app.dill is NOT in the package (it's an intermediate build artifact)
+if find "$BUNDLE_DIR" -name "app.dill" | grep -q .; then
+    echo "CRITICAL ERROR: app.dill found in Click bundle — intermediate build artifacts must not be packaged!" >&2
+    find "$BUNDLE_DIR" -name "app.dill" >&2
+    exit 1
+fi
+
 # 2. Check mininote executable permissions
 if [ ! -x "$BUNDLE_DIR/mininote" ]; then
     echo "ERROR: mininote is not executable!" >&2

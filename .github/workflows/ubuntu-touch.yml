@@ -197,6 +197,41 @@ jobs:
           flutter precache --linux
           flutter --version
 
+      - name: Resolve Engine SHA & validate toolchain
+        run: |
+          set -euo pipefail
+          FLUTTER_ROOT="${HOME}/flutter"
+          ENGINE_SHA="$(cat "${FLUTTER_ROOT}/bin/internal/engine.version" | tr -d '[:space:]')"
+
+          echo "══════════════════════════════════════════════════════"
+          echo "  Flutter version: $(flutter --version 2>&1 | head -1)"
+          echo "  Dart version:    $("${FLUTTER_ROOT}/bin/dart" --version 2>&1)"
+          echo "  Engine SHA:      ${ENGINE_SHA}"
+          echo "  Architecture:    ${{ matrix.arch }}"
+          echo "══════════════════════════════════════════════════════"
+
+          # Verify gen_snapshot candidates for this arch
+          echo ""
+          echo "gen_snapshot candidates:"
+          find "${FLUTTER_ROOT}/bin/cache/artifacts/engine" -name "gen_snapshot" \
+              -exec sh -c 'echo "  $(file "$1") — $1"' _ {} \; 2>/dev/null || echo "  (none in cache yet)"
+
+          # Verify frontend_server
+          echo ""
+          echo "frontend_server candidates:"
+          find "${FLUTTER_ROOT}/bin/cache/artifacts/engine" -name "frontend_server.dart.snapshot" \
+              2>/dev/null | head -5 || echo "  (none in cache yet)"
+
+          # Verify flutter_patched_sdk_product
+          echo ""
+          echo "flutter_patched_sdk_product:"
+          find "${FLUTTER_ROOT}/bin/cache/artifacts/engine" -name "flutter_patched_sdk_product" \
+              -type d 2>/dev/null | head -3 || echo "  (none in cache yet)"
+
+          echo ""
+          echo "Engine SHA pinned: ${ENGINE_SHA}"
+          echo "libflutter_engine.so will be fetched from matching revision."
+
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:

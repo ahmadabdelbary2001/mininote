@@ -1,23 +1,25 @@
 #!/bin/bash
 # Assembles the Click bundle for MiniNotes on Ubuntu Touch, validates ELF architecture,
 # and generates the final .click package.
+# Usage: package-click.sh <arch> [pre-assembled-bundle-dir]
+#   pre-assembled-bundle-dir: if provided, copy from this dir instead of building elinux bundle
 set -euo pipefail
 
 ARCH="${1:-}"
-VERSION="${2:-}"
+# Second arg: pre-assembled bundle directory from build-app.sh (new AOT pipeline)
+# If empty, fall back to old elinux bundle path for backward compatibility.
+PRE_ASSEMBLED_BUNDLE="${2:-}"
 
 if [ -z "$ARCH" ]; then
-    echo "Usage: $0 <arch> [version]" >&2
+    echo "Usage: $0 <arch> [pre-assembled-bundle-dir]" >&2
     exit 1
 fi
 
 ROOT_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
 
-if [ -z "$VERSION" ]; then
-    # Strip the build-number suffix (+N) and any trailing whitespace
-    VERSION="$(grep -m1 '^version:' "$ROOT_DIR/flutter_app/pubspec.yaml" \
-        | sed -E 's/^version:[[:space:]]*//; s/\+[0-9]+//; s/[[:space:]]*$//')"
-fi
+# Always read version from pubspec (VERSION arg removed — was unused)
+VERSION="$(grep -m1 '^version:' "$ROOT_DIR/flutter_app/pubspec.yaml" \
+    | sed -E 's/^version:[[:space:]]*//; s/\+[0-9]+//; s/[[:space:]]*$//')"
 
 echo "Packaging MiniNotes v${VERSION} for ${ARCH}..."
 
@@ -25,34 +27,44 @@ BUNDLE_DIR="$ROOT_DIR/build/click_bundle_${ARCH}"
 rm -rf "$BUNDLE_DIR"
 mkdir -p "$BUNDLE_DIR/lib" "$BUNDLE_DIR/data" "$BUNDLE_DIR/assets/icons"
 
-# 1. Copy Flutter assets and ICU data
-ELINUX_BUNDLE="$ROOT_DIR/flutter_app/build/elinux/${ARCH}/release/bundle"
-if [ ! -d "$ELINUX_BUNDLE" ]; then
-    # Check alternative architecture naming (e.g. x64, arm64, arm)
-    ALT_ARCH="$ARCH"
-    [ "$ARCH" = "amd64" ] && ALT_ARCH="x64"
-    [ "$ARCH" = "armhf" ] && ALT_ARCH="arm"
-    ELINUX_BUNDLE="$ROOT_DIR/flutter_app/build/elinux/${ALT_ARCH}/release/bundle"
-fi
-
-if [ -d "$ELINUX_BUNDLE" ]; then
-    echo "Copying Flutter bundle from $ELINUX_BUNDLE..."
-    cp -r "$ELINUX_BUNDLE/data" "$BUNDLE_DIR/"
-    # Copy AOT library (libapp.so) and any other native libs from the elinux bundle
-    if [ -d "$ELINUX_BUNDLE/lib" ]; then
-        cp -a "$ELINUX_BUNDLE/lib/"*.so "$BUNDLE_DIR/lib/" 2>/dev/null || true
+# 1. Copy Flutter assets and native libs from pre-assembled bundle or legacy path
+if [ -n "$PRE_ASSEMBLED_BUNDLE" ] && [ -d "$PRE_ASSEMBLED_BUNDLE" ]; then
+    # New AOT pipeline: build-app.sh has already assembled the bundle
+    echo "Using pre-assembled bundle from: $PRE_ASSEMBLED_BUNDLE"
+    if [ -d "$PRE_ASSEMBLED_BUNDLE/data" ]; then
+        cp -r "$PRE_ASSEMBLED_BUNDLE/data" "$BUNDLE_DIR/"
     fi
-elif [ -d "$ROOT_DIR/flutter_app/build/flutter_assets" ]; then
-    # Fallback: use flutter_assets from standard `flutter build bundle` output
-    echo "Falling back to flutter_app/build/flutter_assets..."
-    mkdir -p "$BUNDLE_DIR/data"
-    cp -r "$ROOT_DIR/flutter_app/build/flutter_assets" "$BUNDLE_DIR/data/"
+    if [ -d "$PRE_ASSEMBLED_BUNDLE/lib" ]; then
+        cp -a "$PRE_ASSEMBLED_BUNDLE/lib/"*.so "$BUNDLE_DIR/lib/" 2>/dev/null || true
+    fi
+else
+    # Legacy elinux bundle path (backward compatibility)
+    ELINUX_BUNDLE="$ROOT_DIR/flutter_app/build/elinux/${ARCH}/release/bundle"
+    if [ ! -d "$ELINUX_BUNDLE" ]; then
+        ALT_ARCH="$ARCH"
+        [ "$ARCH" = "amd64" ] && ALT_ARCH="x64"
+        [ "$ARCH" = "armhf" ] && ALT_ARCH="arm"
+        ELINUX_BUNDLE="$ROOT_DIR/flutter_app/build/elinux/${ALT_ARCH}/release/bundle"
+    fi
+
+    if [ -d "$ELINUX_BUNDLE" ]; then
+        echo "Copying Flutter bundle from $ELINUX_BUNDLE..."
+        cp -r "$ELINUX_BUNDLE/data" "$BUNDLE_DIR/"
+        if [ -d "$ELINUX_BUNDLE/lib" ]; then
+            cp -a "$ELINUX_BUNDLE/lib/"*.so "$BUNDLE_DIR/lib/" 2>/dev/null || true
+        fi
+    elif [ -d "$ROOT_DIR/flutter_app/build/flutter_assets" ]; then
+        echo "Falling back to flutter_app/build/flutter_assets..."
+        mkdir -p "$BUNDLE_DIR/data"
+        cp -r "$ROOT_DIR/flutter_app/build/flutter_assets" "$BUNDLE_DIR/data/"
+    fi
 fi
 
-# Fallback/explicit ICU and Assets check
+# Fallback/explicit ICU check
 if [ ! -f "$BUNDLE_DIR/data/icudtl.dat" ] && [ -f "$ROOT_DIR/build/engine-artifacts/${ARCH}/icudtl.dat" ]; then
     cp "$ROOT_DIR/build/engine-artifacts/${ARCH}/icudtl.dat" "$BUNDLE_DIR/data/icudtl.dat"
 fi
+
 
 # 2. Copy Rust Runner binary (mininote)
 RUNNER_TARGET="$ARCH"
