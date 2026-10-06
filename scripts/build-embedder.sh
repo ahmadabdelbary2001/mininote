@@ -56,6 +56,25 @@ if [ -f "$PACKAGE_CMAKE" ]; then
     fi
 fi
 
+# ── Patch: Add missing <cstdint> includes for Clang 18 / GCC 13+ ──────────
+BM_HEADER="$SRC_DIR/src/flutter/shell/platform/common/client_wrapper/include/flutter/binary_messenger.h"
+if [ -f "$BM_HEADER" ] && ! grep -q '<cstdint>' "$BM_HEADER"; then
+    echo "Patching binary_messenger.h: adding #include <cstdint>..."
+    sed -i 's/#include <functional>/#include <functional>\n#include <cstdint>/' "$BM_HEADER"
+fi
+
+LC_HEADER="$SRC_DIR/src/flutter/shell/platform/linux_embedded/plugins/lifecycle_plugin.h"
+if [ -f "$LC_HEADER" ] && ! grep -q '<cstdint>' "$LC_HEADER"; then
+    echo "Patching lifecycle_plugin.h: adding #include <cstdint>..."
+    sed -i 's/#include <string>/#include <string>\n#include <cstdint>/' "$LC_HEADER"
+fi
+
+LC_CC="$SRC_DIR/src/flutter/shell/platform/linux_embedded/plugins/lifecycle_plugin.cc"
+if [ -f "$LC_CC" ] && ! grep -q '<cstdint>' "$LC_CC"; then
+    echo "Patching lifecycle_plugin.cc: adding #include <cstdint>..."
+    sed -i '1i #include <cstdint>' "$LC_CC"
+fi
+
 # ── Place libflutter_engine.so where CMake expects it ─────────────────────
 mkdir -p "$SRC_DIR/build"
 cp "$ENGINE_DIR/libflutter_engine.so" "$SRC_DIR/build/libflutter_engine.so"
@@ -83,6 +102,9 @@ if [ -d "/usr/include/maliit-2" ]; then
     MALIIT_INCLUDES="-I/usr/include/maliit-2 -I/usr/include/maliit-2/maliit-glib"
 fi
 
+GLOBAL_CXX_FLAGS="-include cstdint ${MALIIT_INCLUDES}"
+GLOBAL_C_FLAGS="-include stdint.h ${MALIIT_INCLUDES}"
+
 # ── Configure CMake cross-compilation flags ────────────────────────────────
 CMAKE_BUILD_DIR="$ROOT_DIR/build/embedder-build-${ARCH}"
 rm -rf "$CMAKE_BUILD_DIR"
@@ -93,19 +115,19 @@ if [ "$ARCH" = "arm64" ]; then
     EXTRA_CMAKE_ARGS+=(
         "-DCMAKE_SYSTEM_NAME=Linux"
         "-DCMAKE_SYSTEM_PROCESSOR=aarch64"
-        "-DCMAKE_CXX_FLAGS=${MALIIT_INCLUDES}"
-        "-DCMAKE_C_FLAGS=${MALIIT_INCLUDES}"
+        "-DCMAKE_CXX_FLAGS=${GLOBAL_CXX_FLAGS}"
+        "-DCMAKE_C_FLAGS=${GLOBAL_C_FLAGS}"
     )
 elif [ "$ARCH" = "amd64" ]; then
     EXTRA_CMAKE_ARGS+=(
-        "-DCMAKE_CXX_FLAGS=${MALIIT_INCLUDES}"
-        "-DCMAKE_C_FLAGS=${MALIIT_INCLUDES}"
+        "-DCMAKE_CXX_FLAGS=${GLOBAL_CXX_FLAGS}"
+        "-DCMAKE_C_FLAGS=${GLOBAL_C_FLAGS}"
     )
 elif [ "$ARCH" = "armhf" ]; then
     EXTRA_CMAKE_ARGS+=(
         "-DCMAKE_SYSTEM_NAME=Linux"
         "-DCMAKE_SYSTEM_PROCESSOR=arm"
-        "-DCMAKE_CXX_FLAGS=${MALIIT_INCLUDES} -I/usr/arm-linux-gnueabihf/include/c++/9/arm-linux-gnueabihf"
+        "-DCMAKE_CXX_FLAGS=${GLOBAL_CXX_FLAGS} -I/usr/arm-linux-gnueabihf/include/c++/9/arm-linux-gnueabihf"
     )
 fi
 

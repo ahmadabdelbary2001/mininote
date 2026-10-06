@@ -12,10 +12,10 @@ def get_package_info():
         try:
             with open(manifest_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("name", "mininotes"), data.get("version", "1.0.3")
+                return data.get("name", "mininotes"), data.get("version", "1.0.4")
         except Exception:
             pass
-    return "mininotes", "1.0.3"
+    return "mininotes", "1.0.4"
 
 def generate_changelog():
     for p in [".ci/release-notes/release-notes.md", "release-notes.md"]:
@@ -27,21 +27,23 @@ def generate_changelog():
                         return c
             except Exception:
                 pass
-    tag = os.environ.get("GITHUB_REF_NAME", "v1.0.3")
+    tag = os.environ.get("GITHUB_REF_NAME", "v1.0.4")
     return f"""## Changes in {tag}
 
 ### Features
-- Complete cross-platform Flutter + Rust (FFI) architecture.
-- Added support for Windows (EXE, MSI, MSIX, ZIP), macOS (DMG, ZIP), iOS (IPA, ZIP), Android (Multi-ABI APKs & AAB).
-- Restored official MiniNote app icons and high-resolution brand identity.
+- Complete Flutter Embedded Linux (Wayland) + Rust FFI architecture.
+- Full offline-first SQLite synchronization through native Rust core.
+- Mir / Lomiri native Wayland support with virtual keyboard (Maliit OSK) integration.
+- Strict AppArmor confinement compliance (XDG data/cache isolation).
 
 ### Improvements
-- Full offline-first SQLite synchronization through native Rust core.
-- Optimized app size with LTO and strip symbol compression.
-- Responsive mobile UI optimized for Ubuntu Touch and touch screen devices.
+- Release AOT compilation (libapp.so) with ICU assets packaging.
+- Cross-platform support across Ubuntu Touch, Linux, Windows, macOS, Android, iOS.
 """
 
-def submit_to_openstore(click_path, api_key, changelog, package_name="mininotes", channel="focal"):
+def submit_to_openstore(click_path, api_key, changelog, package_name="mininotes", channel=None):
+    if channel is None:
+        channel = os.environ.get("OPENSTORE_CHANNEL", "focal")
     try:
         import requests
         use_requests = True
@@ -164,7 +166,7 @@ def main():
             api_key=api_key,
             changelog=changelog,
             package_name=package_name,
-            channel="focal"
+            channel=os.environ.get("OPENSTORE_CHANNEL", "focal")
         )
         if success:
             success_count += 1
