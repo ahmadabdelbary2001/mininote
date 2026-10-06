@@ -133,7 +133,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang cmake ninja-build pkg-config \
-            liblzma-dev click file dpkg-dev python3-pip \
+            liblzma-dev click file dpkg-dev pipx \
             libegl1-mesa-dev libgles2-mesa-dev libglib2.0-dev \
             libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev \
             libinput-dev libudev-dev wayland-protocols \
@@ -152,8 +152,14 @@ jobs:
             bash scripts/setup-arm64-cross.sh
           fi
 
-          python3 -m pip install --break-system-packages \
-            "clickable-ut==${{ env.CLICKABLE_VERSION }}"
+          # Install clickable via pipx (isolated venv, robust against host APT multiarch changes)
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          if command -v pipx &>/dev/null; then
+            pipx install "clickable-ut==${{ env.CLICKABLE_VERSION }}" || true
+          elif command -v pip3 &>/dev/null; then
+            pip3 install --break-system-packages "clickable-ut==${{ env.CLICKABLE_VERSION }}" || true
+          fi
 
       # ── Flutter: manual install to guarantee version+architecture match ──
       # subosito/flutter-action fails to resolve flutter 3.41.7 for arm64
