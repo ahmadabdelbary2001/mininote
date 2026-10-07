@@ -62,8 +62,6 @@ esac
 # ─── Resolve Flutter SDK paths ────────────────────────────────────────────────
 FLUTTER_BIN="$(which flutter)"
 FLUTTER_ROOT="$(dirname "$(dirname "$(readlink -f "$FLUTTER_BIN")")")"
-DART_BIN="$FLUTTER_ROOT/bin/dart"
-DART_SDK="$FLUTTER_ROOT/bin/cache/dart-sdk"
 ENGINE_STAMP="$FLUTTER_ROOT/bin/internal/engine.version"
 
 if [ ! -f "$ENGINE_STAMP" ]; then
@@ -76,7 +74,6 @@ ENGINE_SHA="$(tr -d '[:space:]' < "$ENGINE_STAMP")"
 echo ""
 echo "══════════════════════════════════════════════════════════"
 echo "  Flutter SDK:    $(flutter --version --machine 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('frameworkVersion','?'))" 2>/dev/null || flutter --version 2>&1 | head -1)"
-echo "  Dart version:   $("$DART_BIN" --version 2>&1)"
 echo "  Engine SHA:     $ENGINE_SHA"
 echo "  Flutter root:   $FLUTTER_ROOT"
 echo "  Target arch:    $ARCH"
@@ -105,158 +102,67 @@ RUSTFLAGS="-C linker=$LINKER" cargo build \
     --release \
     --target "$RUST_TARGET"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PHASE A: Flutter Assets (NO kernel blob — assets only)
-# ─────────────────────────────────────────────────────────────────────────────
-build_flutter_assets() {
+# =============================================================================
+# PHASE A: Build Flutter bundle → assets + kernel_blob.bin
+# =============================================================================
+# flutter build bundle (without --release) produces:
+#   build/flutter_assets/kernel_blob.bin  ← AOT input for gen_snapshot
+#   build/flutter_assets/                 ← fonts, images, etc.
+#
+# NOTE: flutter build bundle --release does NOT reliably produce kernel_blob.bin
+# in Flutter 3.x because the release pipeline assumes gen_snapshot will be
+# invoked by the host toolchain. For our custom eLinux embedder, we invoke
+# gen_snapshot ourselves, so we need the debug kernel blob as AOT input.
+#
+# This is the standard approach documented by sony/flutter-embedded-linux.
+# =============================================================================
+build_flutter_bundle() {
     echo ""
-    echo "── Phase A: Building Flutter assets ──────────────────────────────────"
-    local ASSET_OUT="$ROOT_DIR/build/flutter-bundle/$ARCH/flutter_assets"
-    mkdir -p "$ASSET_OUT"
+    echo "── Phase A: Building Flutter bundle (assets + kernel_blob.bin) ────────"
 
     (
         cd "$FLUTTER_APP"
         flutter pub get
-        # --asset-dir writes ONLY assets (fonts, images, etc.) to the target dir.
-        # It does NOT produce kernel_blob.bin here; the AOT kernel is built separately.
-        flutter build bundle \
-            --asset-dir="$ASSET_OUT" \
-            --depfile="$ROOT_DIR/build/flutter-bundle/$ARCH/flutter_assets.d"
+        # Run flutter build bundle without --release to ensure kernel_blob.bin is produced.
+        # The kernel_blob.bin is architecture-independent Dart bytecode.
+        # gen_snapshot compiles it to native AOT code for the target arch.
+        flutter build bundle
     )
 
-    if [ ! -d "$ASSET_OUT" ]; then
-        echo "ERROR: flutter build bundle produced no assets at $ASSET_OUT" >&2
+    # kernel_blob.bin is the input to gen_snapshot
+    KERNEL_BLOB="$FLUTTER_APP/build/flutter_assets/kernel_blob.bin"
+    if [ ! -f "$KERNEL_BLOB" ]; then
+        echo "ERROR: flutter build bundle did not produce kernel_blob.bin" >&2
+        echo "       Expected at: $KERNEL_BLOB" >&2
+        echo "       Contents of build/flutter_assets/:" >&2
+        ls -la "$FLUTTER_APP/build/flutter_assets/" >&2 2>/dev/null || true
         exit 1
     fi
-    echo "  [OK] Flutter assets written to: $ASSET_OUT"
+    local KERNEL_SIZE
+    KERNEL_SIZE="$(wc -c < "$KERNEL_BLOB")"
+    echo "  [OK] kernel_blob.bin: $KERNEL_BLOB ($KERNEL_SIZE bytes)"
+
+    # Copy assets to our bundle directory
+    local ASSET_OUT="$ROOT_DIR/build/flutter-bundle/$ARCH/flutter_assets"
+    mkdir -p "$ASSET_OUT"
+    # Copy all assets (rsync preserves structure; fallback to cp -rT or find)
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --delete "$FLUTTER_APP/build/flutter_assets/" "$ASSET_OUT/"
+    else
+        cp -r "$FLUTTER_APP/build/flutter_assets/." "$ASSET_OUT/"
+    fi
+    echo "  [OK] Flutter assets copied to: $ASSET_OUT"
+
+
+    # Export kernel_blob.bin path for downstream use
+    AOT_KERNEL="$KERNEL_BLOB"
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PHASE B: AOT kernel via frontend_server (produces app.dill)
-# ─────────────────────────────────────────────────────────────────────────────
-build_aot_kernel() {
-    echo ""
-    echo "── Phase B: Building AOT kernel (app.dill) ───────────────────────────"
+# =============================================================================
+# PHASE B: (kernel is produced in Phase A — no separate step needed)
+# AOT_KERNEL is already set to kernel_blob.bin by build_flutter_bundle()
+# =============================================================================
 
-    # Resolve frontend_server.dart.snapshot from the installed Flutter SDK
-    local FRONTEND_SERVER=""
-    local FRONTEND_CANDIDATES=(
-        "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64/frontend_server.dart.snapshot"
-        "$FLUTTER_ROOT/bin/cache/dart-sdk/bin/snapshots/frontend_server.dart.snapshot"
-        "$FLUTTER_ROOT/bin/cache/dart-sdk/bin/snapshots/kernel_worker.dart.snapshot"
-    )
-    for fc in "${FRONTEND_CANDIDATES[@]}"; do
-        if [ -f "$fc" ]; then
-            FRONTEND_SERVER="$fc"
-            echo "  Found frontend_server: $fc"
-            break
-        fi
-    done
-
-    if [ -z "$FRONTEND_SERVER" ]; then
-        echo "ERROR: frontend_server.dart.snapshot not found." >&2
-        echo "Searched:" >&2
-        for fc in "${FRONTEND_CANDIDATES[@]}"; do echo "    $fc" >&2; done
-        # Attempt to populate cache
-        echo "Attempting flutter precache --linux to fetch frontend_server..." >&2
-        flutter precache --linux 2>/dev/null || true
-        for fc in "${FRONTEND_CANDIDATES[@]}"; do
-            if [ -f "$fc" ]; then
-                FRONTEND_SERVER="$fc"
-                echo "  Found frontend_server after precache: $fc"
-                break
-            fi
-        done
-    fi
-
-    if [ -z "$FRONTEND_SERVER" ]; then
-        echo "ERROR: frontend_server.dart.snapshot still not found after precache." >&2
-        echo "Cannot build AOT kernel without frontend_server." >&2
-        exit 1
-    fi
-
-    # Resolve flutter_patched_sdk_product
-    local PATCHED_SDK=""
-    local PATCHED_SDK_CANDIDATES=(
-        "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64/flutter_patched_sdk_product"
-        "$FLUTTER_ROOT/bin/cache/artifacts/engine/common/flutter_patched_sdk_product"
-    )
-    for ps in "${PATCHED_SDK_CANDIDATES[@]}"; do
-        if [ -d "$ps" ]; then
-            PATCHED_SDK="$ps"
-            echo "  Found flutter_patched_sdk_product: $ps"
-            break
-        fi
-    done
-
-    if [ -z "$PATCHED_SDK" ]; then
-        echo "ERROR: flutter_patched_sdk_product directory not found." >&2
-        echo "Searched:" >&2
-        for ps in "${PATCHED_SDK_CANDIDATES[@]}"; do echo "    $ps" >&2; done
-        exit 1
-    fi
-
-    # Resolve package_config.json from the Flutter app
-    local PKG_CONFIG="$FLUTTER_APP/.dart_tool/package_config.json"
-    if [ ! -f "$PKG_CONFIG" ]; then
-        echo "  Running 'flutter pub get' to generate package_config.json..."
-        (cd "$FLUTTER_APP" && flutter pub get)
-    fi
-    if [ ! -f "$PKG_CONFIG" ]; then
-        echo "ERROR: package_config.json not found at $PKG_CONFIG" >&2
-        exit 1
-    fi
-
-    local AOT_KERNEL_DIR="$ROOT_DIR/build/flutter-bundle/$ARCH"
-    local AOT_KERNEL_OUT="$AOT_KERNEL_DIR/app.dill"
-    mkdir -p "$AOT_KERNEL_DIR"
-
-    echo "  Building app.dill using frontend_server..."
-    echo "    frontend_server: $FRONTEND_SERVER"
-    echo "    patched_sdk:     $PATCHED_SDK"
-    echo "    package_config:  $PKG_CONFIG"
-    echo "    output:          $AOT_KERNEL_OUT"
-
-    # The frontend_server AOT compilation flags per Flutter embedded linux docs:
-    # --aot: enable AOT mode
-    # --tfa: tree-shake based on full type analysis
-    # -Ddart.vm.product=true: disable debug/assert overhead
-    # -Ddart.vm.profile=false: not profiling
-    # --packages: package_config.json
-    # --sdk-root: flutter_patched_sdk_product (contains dart platform libs)
-    # --target=flutter: Flutter embedding target
-    # --output-dill: output path
-    # The final positional arg is main.dart (entrypoint)
-    "$DART_BIN" \
-        "$FRONTEND_SERVER" \
-        --target=flutter \
-        --sdk-root="$PATCHED_SDK/" \
-        --packages="$PKG_CONFIG" \
-        --aot \
-        --tfa \
-        -Ddart.vm.product=true \
-        -Ddart.vm.profile=false \
-        --output-dill="$AOT_KERNEL_OUT" \
-        "$FLUTTER_APP/lib/main.dart"
-
-    if [ ! -f "$AOT_KERNEL_OUT" ]; then
-        echo "ERROR: frontend_server completed but app.dill was NOT produced at $AOT_KERNEL_OUT" >&2
-        exit 1
-    fi
-
-    local DILL_SIZE
-    DILL_SIZE="$(wc -c < "$AOT_KERNEL_OUT")"
-    if [ "$DILL_SIZE" -lt 4096 ]; then
-        echo "ERROR: app.dill is suspiciously small ($DILL_SIZE bytes) — compilation likely failed." >&2
-        exit 1
-    fi
-
-    echo "  [OK] app.dill produced: $AOT_KERNEL_OUT ($DILL_SIZE bytes)"
-
-    # Export for downstream use
-    AOT_KERNEL="$AOT_KERNEL_OUT"
-    echo "$AOT_KERNEL" > "$AOT_KERNEL_DIR/app.dill.path"
-}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # gen_snapshot resolver: architecture-aware, deterministic, no fallback
@@ -477,11 +383,10 @@ validate_aot_library() {
 # ─────────────────────────────────────────────────────────────────────────────
 # Execute the AOT pipeline phases
 # ─────────────────────────────────────────────────────────────────────────────
-build_flutter_assets
-build_aot_kernel
-resolve_gen_snapshot
-build_aot_library
-validate_aot_library
+build_flutter_bundle     # Phase A: flutter build bundle → assets + kernel_blob.bin
+resolve_gen_snapshot     # Phase B: find architecture-specific gen_snapshot
+build_aot_library        # Phase C: gen_snapshot kernel_blob.bin → libapp.so
+validate_aot_library     # Phase D: verify libapp.so architecture
 
 # ─── 7. Assemble bundle structure ─────────────────────────────────────────────
 echo ""
@@ -513,7 +418,10 @@ fi
 cp "$AOT_LIB" "$BUNDLE_OUT/lib/libapp.so"
 echo "  [OK] Copied libapp.so (AOT)"
 
-# Production release bundle must NOT contain debug-only artifacts:
+# Production release bundle must NOT contain JIT-only artifacts.
+# kernel_blob.bin is included in the bundle for the embedder to use when
+# libapp.so fails to load (fallback), but some eLinux embedders don't need it.
+# For our production AOT-only build, remove it to ensure pure AOT delivery.
 for debug_artifact in "kernel_blob.bin" "vm_snapshot_data" "isolate_snapshot_data"; do
     if [ -f "$BUNDLE_OUT/data/flutter_assets/$debug_artifact" ]; then
         echo "  [INFO] Removing JIT-only artifact from release bundle: $debug_artifact"
