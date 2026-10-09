@@ -118,7 +118,6 @@ if [ -z "$NATIVE_CORE_SO" ]; then
 fi
 echo "Using native_core.so: $NATIVE_CORE_SO"
 cp "$NATIVE_CORE_SO" "$BUNDLE_DIR/lib/libnative_core.so"
-cp "$NATIVE_CORE_SO" "$BUNDLE_DIR/libnative_core.so"
 
 # 4. Copy flutter engine and embedder shared libraries
 ENGINE_DIR="$ROOT_DIR/build/engine-artifacts/${ARCH}"
@@ -133,16 +132,42 @@ fi
 cp "$ROOT_DIR/packaging/click/mininote-wrapper" "$BUNDLE_DIR/mininote-wrapper"
 chmod +x "$BUNDLE_DIR/mininote-wrapper"
 
-cp "$ROOT_DIR/packaging/click/mininotes.apparmor" "$BUNDLE_DIR/mininotes.apparmor"
+# Configure framework and apparmor policy version
+CLICK_FRAMEWORK="${CLICK_FRAMEWORK:-ubuntu-touch-24.04-1.x}"
+if [ "$CLICK_FRAMEWORK" = "ubuntu-sdk-20.04" ]; then
+    CLICK_POLICY_VERSION="20.04"
+else
+    CLICK_POLICY_VERSION="2404.1"
+fi
+
+sed -e "s/\"policy_version\": .*/\"policy_version\": \"${CLICK_POLICY_VERSION}\"/g" \
+    "$ROOT_DIR/packaging/click/mininotes.apparmor" > "$BUNDLE_DIR/mininotes.apparmor"
+
 cp "$ROOT_DIR/packaging/click/mininotes.desktop"  "$BUNDLE_DIR/mininotes.desktop"
 if [ -f "$ROOT_DIR/assets/icons/mininotes.svg" ]; then
     cp "$ROOT_DIR/assets/icons/mininotes.svg" "$BUNDLE_DIR/assets/icons/mininotes.svg"
 fi
 
-# Substitute architecture and version into manifest.json
+# Substitute architecture, version, and framework into manifest.json
 sed -e "s/ARCH_PLACEHOLDER/${ARCH}/g" \
     -e "s/\"version\": \".*\"/\"version\": \"${VERSION}\"/g" \
+    -e "s/\"framework\": \".*\"/\"framework\": \"${CLICK_FRAMEWORK}\"/g" \
     "$ROOT_DIR/packaging/click/manifest.json" > "$BUNDLE_DIR/manifest.json"
+
+# Strip binaries if target strip tool exists
+STRIP_BIN=""
+case "$ARCH" in
+    amd64) command -v strip &>/dev/null && STRIP_BIN="strip" ;;
+    arm64) command -v aarch64-linux-gnu-strip &>/dev/null && STRIP_BIN="aarch64-linux-gnu-strip" ;;
+    armhf) command -v arm-linux-gnueabihf-strip &>/dev/null && STRIP_BIN="arm-linux-gnueabihf-strip" ;;
+esac
+if [ -n "$STRIP_BIN" ]; then
+    echo "Running safe $STRIP_BIN --strip-unneeded on binaries..."
+    "$STRIP_BIN" --strip-unneeded "$BUNDLE_DIR/mininote" 2>/dev/null || true
+    for so_file in "$BUNDLE_DIR/lib/"*.so; do
+        [ -f "$so_file" ] && "$STRIP_BIN" --strip-unneeded "$so_file" 2>/dev/null || true
+    done
+fi
 
 # 6. Run validation on the assembled bundle
 "$ROOT_DIR/scripts/validate-click.sh" "$BUNDLE_DIR" "$ARCH"

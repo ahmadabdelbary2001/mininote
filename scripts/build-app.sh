@@ -120,6 +120,7 @@ build_flutter_bundle() {
     fi
     # Clean up JIT-only artifacts from the assets directory
     rm -f "$ASSET_OUT/kernel_blob.bin" "$ASSET_OUT/vm_snapshot_data" "$ASSET_OUT/isolate_snapshot_data"
+    rm -rf "$ASSET_OUT/packages/cupertino_icons"
     echo "  [OK] Flutter assets copied to: $ASSET_OUT"
 }
 
@@ -204,6 +205,83 @@ build_aot_kernel() {
     DILL_SIZE="$(wc -c < "$DILL_OUT")"
     echo "  [OK] app.dill produced: $DILL_OUT ($DILL_SIZE bytes)"
     AOT_KERNEL="$DILL_OUT"
+}
+
+# =============================================================================
+# PHASE B.2: Tree-shake icon fonts
+# =============================================================================
+tree_shake_icons() {
+    local DILL_FILE="${1:-}"
+    local ASSET_OUT="$ROOT_DIR/build/flutter-bundle/$ARCH/flutter_assets"
+    local INPUT_FONT="$ASSET_OUT/fonts/MaterialIcons-Regular.otf"
+    [ -f "$INPUT_FONT" ] || INPUT_FONT="$FLUTTER_APP/build/flutter_assets/fonts/MaterialIcons-Regular.otf"
+
+    if [ ! -f "$INPUT_FONT" ] || [ -z "$DILL_FILE" ] || [ ! -f "$DILL_FILE" ]; then
+        return 0
+    fi
+
+    echo ""
+    echo "── Phase B.2: Tree-shaking MaterialIcons icon font ─────────────────"
+
+    local CONST_FINDER=""
+    for cf in \
+        "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64/const_finder.dart.snapshot" \
+        $(find "$FLUTTER_ROOT/bin/cache" -name "const_finder.dart.snapshot" 2>/dev/null); do
+        if [ -f "$cf" ]; then
+            CONST_FINDER="$cf"
+            break
+        fi
+    done
+
+    local FONT_SUBSET=""
+    for fs in \
+        "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64/font-subset" \
+        "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64/font_subset" \
+        $(find "$FLUTTER_ROOT/bin/cache" -name "font-subset*" -type f -perm -111 2>/dev/null); do
+        if [ -x "$fs" ]; then
+            FONT_SUBSET="$fs"
+            break
+        fi
+    done
+
+    local DART_CMD="${DART_BIN:-$FLUTTER_ROOT/bin/dart}"
+
+    if [ -n "$CONST_FINDER" ] && [ -n "$FONT_SUBSET" ]; then
+        local TMP_OUTPUT="$(mktemp --suffix=.otf)"
+        local FINDER_JSON
+        FINDER_JSON="$("$DART_CMD" "$CONST_FINDER" \
+            --kernel-file "$DILL_FILE" \
+            --class-library-uri package:flutter/src/widgets/icon_data.dart \
+            --class-name IconData \
+            --annotation-class-name _StaticIconProvider \
+            --annotation-class-library-uri package:flutter/src/widgets/icon_data.dart 2>/dev/null || true)"
+
+        local CODEPOINTS
+        CODEPOINTS="$(python3 -c "
+import sys, json
+try:
+    d = json.loads('''$FINDER_JSON''')
+    pts = [str(x['codePoint']) for x in d.get('constantInstances', []) if x.get('fontFamily') == 'MaterialIcons']
+    print(' '.join(pts))
+except Exception:
+    pass
+" 2>/dev/null || true)"
+
+        if [ -n "$CODEPOINTS" ]; then
+            if printf "%s" "$CODEPOINTS" | "$FONT_SUBSET" "$TMP_OUTPUT" "$INPUT_FONT" >/dev/null 2>&1; then
+                local ORIG_SIZE="$(wc -c < "$INPUT_FONT")"
+                local NEW_SIZE="$(wc -c < "$TMP_OUTPUT")"
+                if [ "$NEW_SIZE" -gt 0 ] && [ "$NEW_SIZE" -lt "$ORIG_SIZE" ]; then
+                    cp "$TMP_OUTPUT" "$INPUT_FONT"
+                    [ -d "$ASSET_OUT/fonts" ] && cp "$TMP_OUTPUT" "$ASSET_OUT/fonts/MaterialIcons-Regular.otf"
+                    echo "  [OK] MaterialIcons-Regular.otf tree-shaken: $ORIG_SIZE -> $NEW_SIZE bytes!"
+                fi
+            fi
+        fi
+        rm -f "$TMP_OUTPUT"
+    else
+        echo "  [INFO] const_finder or font-subset not found in cache; skipping font tree-shaking."
+    fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -350,6 +428,7 @@ validate_aot_library() {
 # ─────────────────────────────────────────────────────────────────────────────
 build_flutter_bundle     # Phase A: Flutter assets
 build_aot_kernel         # Phase B: frontend_server -> app.dill
+tree_shake_icons "$AOT_KERNEL" # Phase B.2: Icon font tree-shaking
 resolve_gen_snapshot     # Phase C: architecture-specific gen_snapshot
 build_aot_library        # Phase D: gen_snapshot -> libapp.so
 validate_aot_library     # Phase E: readelf & file arch check

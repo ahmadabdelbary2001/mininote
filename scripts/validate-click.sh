@@ -74,6 +74,19 @@ if find "$BUNDLE_DIR" -name "app.dill" | grep -q .; then
     exit 1
 fi
 
+# Ensure no duplicate libnative_core.so in bundle root
+if [ -f "$BUNDLE_DIR/libnative_core.so" ]; then
+    echo "CRITICAL ERROR: Duplicate libnative_core.so found at Click bundle root!" >&2
+    exit 1
+fi
+echo "  [OK] No duplicate libnative_core.so at bundle root"
+
+# Ensure no unused CupertinoIcons
+if find "$BUNDLE_DIR" -name "*CupertinoIcons*" | grep -q .; then
+    echo "WARNING: Unused CupertinoIcons found in Click bundle — removing..." >&2
+    find "$BUNDLE_DIR" -name "*CupertinoIcons*" -delete || true
+fi
+
 # 2. Check mininote executable permissions
 if [ ! -x "$BUNDLE_DIR/mininote" ]; then
     echo "ERROR: mininote is not executable!" >&2
