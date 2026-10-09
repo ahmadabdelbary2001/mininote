@@ -98,10 +98,10 @@ jobs:
 
           cp assets/icons/mininotes.svg "$DEB_ROOT/usr/share/icons/hicolor/scalable/apps/io.github.ahmadabdelbary2001.mininote.svg"
 
-          printf 'Package: mininote\nVersion: 1.0.3\nSection: utils\nPriority: optional\nArchitecture: amd64\nMaintainer: Ahmad Abdelbary <ahmadabdelbary2001@github.com>\nDescription: MiniNote - Fast offline notes app powered by Flutter and Rust FFI.\n' > "$DEB_ROOT/DEBIAN/control"
+          printf 'Package: mininote\nVersion: 1.0.4\nSection: utils\nPriority: optional\nArchitecture: amd64\nMaintainer: Ahmad Abdelbary <ahmadabdelbary2001@github.com>\nDescription: MiniNote - Fast offline notes app powered by Flutter and Rust FFI.\n' > "$DEB_ROOT/DEBIAN/control"
 
-          dpkg-deb --build "$DEB_ROOT" dist/mininote_1.0.3_amd64.deb
-          test -f dist/mininote_1.0.3_amd64.deb
+          dpkg-deb --build "$DEB_ROOT" dist/mininote_1.0.4_amd64.deb
+          test -f dist/mininote_1.0.4_amd64.deb
           ls -lh dist/
 
       - name: Upload Linux artifacts

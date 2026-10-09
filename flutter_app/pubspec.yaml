@@ -28,7 +28,7 @@ msix_config:
   display_name: MiniNote
   publisher_display_name: Ahmad Abdelbary
   identity_name: io.github.ahmadabdelbary2001.mininote
-  msix_version: 1.0.3.0
+  msix_version: 1.0.4.0
   logo_path: windows/runner/resources/app_icon.ico
   capabilities: internetClient
   install_certificate: false
