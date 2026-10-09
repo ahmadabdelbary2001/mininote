@@ -11,5 +11,5 @@
     },
     "version": "1.0.4",
     "maintainer": "Ahmad Abdelbary <ahmadabdelbary2001@github.com>",
-    "framework": "ubuntu-sdk-20.04"
+    "framework": "ubuntu-touch-24.04-1.x"
 }

@@ -285,10 +285,15 @@ jobs:
           test -f "$CLICK_FILE"
 
           echo "=== Inspecting Generated Click Package: $CLICK_FILE ==="
+          ls -lh "$CLICK_FILE"
           click info "$CLICK_FILE"
 
+          echo "=== Click Package Internal Size Breakdown ==="
+          dpkg-deb -c "$CLICK_FILE" 2>/dev/null || true
+
           if command -v clickable &>/dev/null; then
-            clickable review "$CLICK_FILE" || echo "clickable review advisory (non-fatal)"
+            echo "=== Running Mandatory Clickable Review ==="
+            clickable review "$CLICK_FILE"
           fi
 
       - name: Upload Click artifact
