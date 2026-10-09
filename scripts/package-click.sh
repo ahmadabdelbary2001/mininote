@@ -140,7 +140,8 @@ else
     CLICK_POLICY_VERSION="2404.1"
 fi
 
-sed -e "s/\"policy_version\": .*/\"policy_version\": \"${CLICK_POLICY_VERSION}\"/g" \
+# policy_version must be a bare JSON number (no quotes) — e.g. 2404.1 not "2404.1"
+sed -e "s/\"policy_version\": .*/\"policy_version\": ${CLICK_POLICY_VERSION}/g" \
     "$ROOT_DIR/packaging/click/mininotes.apparmor" > "$BUNDLE_DIR/mininotes.apparmor"
 
 cp "$ROOT_DIR/packaging/click/mininotes.desktop"  "$BUNDLE_DIR/mininotes.desktop"
