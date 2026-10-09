@@ -27,21 +27,16 @@ case "$ARCH" in
         LINKER="gcc"
         ELF_ARCH_PATTERN="x86-64"
         ELF_MACHINE_PATTERN="Advanced Micro Devices X86-64"
-        # amd64: gen_snapshot is a native x64 binary that emits x64 AOT
-        # Artifact path in Flutter SDK cache:
-        #   bin/cache/artifacts/engine/linux-x64/gen_snapshot
-        GEN_SNAPSHOT_EXPECTED_DIR="linux-x64"
+        # amd64: release gen_snapshot lives in linux-x64-release/gen_snapshot
+        GEN_SNAPSHOT_EXPECTED_DIR="linux-x64-release"
         ;;
     arm64)
         RUST_TARGET="aarch64-unknown-linux-gnu"
         LINKER="aarch64-linux-gnu-gcc"
         ELF_ARCH_PATTERN="aarch64"
         ELF_MACHINE_PATTERN="AArch64"
-        # arm64 cross-build: gen_snapshot MUST be the x64-hosted AArch64-targeting binary.
-        # It lives at: bin/cache/artifacts/engine/linux-arm64-release/clang_x64/gen_snapshot
-        # The binary is x86-64 (runs on CI host) but emits AArch64 AOT instructions.
-        # DO NOT use linux-x64/gen_snapshot — it emits x64 AOT, not AArch64.
-        GEN_SNAPSHOT_EXPECTED_DIR="linux-arm64-release/clang_x64"
+        # arm64 cross-build: x64-hosted AArch64-targeting gen_snapshot
+        GEN_SNAPSHOT_EXPECTED_DIR="android-arm64-release/linux-x64"
         ;;
     armhf)
         echo "=========================================================================="
@@ -103,225 +98,199 @@ RUSTFLAGS="-C linker=$LINKER" cargo build \
     --target "$RUST_TARGET"
 
 # =============================================================================
-# PHASE A: Build Flutter bundle → assets + kernel_blob.bin
-# =============================================================================
-# flutter build bundle (without --release) produces:
-#   build/flutter_assets/kernel_blob.bin  ← AOT input for gen_snapshot
-#   build/flutter_assets/                 ← fonts, images, etc.
-#
-# NOTE: flutter build bundle --release does NOT reliably produce kernel_blob.bin
-# in Flutter 3.x because the release pipeline assumes gen_snapshot will be
-# invoked by the host toolchain. For our custom eLinux embedder, we invoke
-# gen_snapshot ourselves, so we need the debug kernel blob as AOT input.
-#
-# This is the standard approach documented by sony/flutter-embedded-linux.
+# PHASE A: Build Flutter bundle assets
 # =============================================================================
 build_flutter_bundle() {
     echo ""
-    echo "── Phase A: Building Flutter bundle (assets + kernel_blob.bin) ────────"
+    echo "── Phase A: Building Flutter bundle assets ───────────────────────────"
 
     (
         cd "$FLUTTER_APP"
         flutter pub get
-        # Run flutter build bundle without --release to ensure kernel_blob.bin is produced.
-        # The kernel_blob.bin is architecture-independent Dart bytecode.
-        # gen_snapshot compiles it to native AOT code for the target arch.
         flutter build bundle
     )
-
-    # kernel_blob.bin is the input to gen_snapshot
-    KERNEL_BLOB="$FLUTTER_APP/build/flutter_assets/kernel_blob.bin"
-    if [ ! -f "$KERNEL_BLOB" ]; then
-        echo "ERROR: flutter build bundle did not produce kernel_blob.bin" >&2
-        echo "       Expected at: $KERNEL_BLOB" >&2
-        echo "       Contents of build/flutter_assets/:" >&2
-        ls -la "$FLUTTER_APP/build/flutter_assets/" >&2 2>/dev/null || true
-        exit 1
-    fi
-    local KERNEL_SIZE
-    KERNEL_SIZE="$(wc -c < "$KERNEL_BLOB")"
-    echo "  [OK] kernel_blob.bin: $KERNEL_BLOB ($KERNEL_SIZE bytes)"
 
     # Copy assets to our bundle directory
     local ASSET_OUT="$ROOT_DIR/build/flutter-bundle/$ARCH/flutter_assets"
     mkdir -p "$ASSET_OUT"
-    # Copy all assets (rsync preserves structure; fallback to cp -rT or find)
     if command -v rsync >/dev/null 2>&1; then
         rsync -a --delete "$FLUTTER_APP/build/flutter_assets/" "$ASSET_OUT/"
     else
         cp -r "$FLUTTER_APP/build/flutter_assets/." "$ASSET_OUT/"
     fi
+    # Clean up JIT-only artifacts from the assets directory
+    rm -f "$ASSET_OUT/kernel_blob.bin" "$ASSET_OUT/vm_snapshot_data" "$ASSET_OUT/isolate_snapshot_data"
     echo "  [OK] Flutter assets copied to: $ASSET_OUT"
-
-
-    # Export kernel_blob.bin path for downstream use
-    AOT_KERNEL="$KERNEL_BLOB"
 }
 
 # =============================================================================
-# PHASE B: (kernel is produced in Phase A — no separate step needed)
-# AOT_KERNEL is already set to kernel_blob.bin by build_flutter_bundle()
+# PHASE B: Build true AOT kernel (app.dill) via frontend_server
 # =============================================================================
+build_aot_kernel() {
+    echo ""
+    echo "── Phase B: Building AOT kernel (app.dill) ───────────────────────────"
 
+    # 1. Locate frontend_server snapshot
+    local FRONTEND_SERVER=""
+    for fs_candidate in \
+        "$FLUTTER_ROOT/bin/cache/dart-sdk/bin/snapshots/frontend_server_aot.dart.snapshot" \
+        "$FLUTTER_ROOT/bin/cache/dart-sdk/bin/snapshots/frontend_server.dart.snapshot" \
+        "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64/frontend_server.dart.snapshot" \
+        "$ENGINE_DIR/frontend_server.dart.snapshot"; do
+        if [ -f "$fs_candidate" ]; then
+            FRONTEND_SERVER="$fs_candidate"
+            break
+        fi
+    done
+
+    if [ -z "$FRONTEND_SERVER" ]; then
+        echo "ERROR: frontend_server snapshot not found." >&2
+        echo "       Searched in: $FLUTTER_ROOT/bin/cache/dart-sdk/bin/snapshots/" >&2
+        exit 1
+    fi
+    echo "  frontend_server: $FRONTEND_SERVER"
+
+    # 2. Locate Dart runner
+    local DART_BIN="$FLUTTER_ROOT/bin/dart"
+    if [[ "$FRONTEND_SERVER" == *"frontend_server_aot"* ]] && [ -x "$FLUTTER_ROOT/bin/cache/dart-sdk/bin/dartaotruntime" ]; then
+        DART_BIN="$FLUTTER_ROOT/bin/cache/dart-sdk/bin/dartaotruntime"
+    fi
+    echo "  Dart runner:     $DART_BIN"
+
+    # 3. Locate flutter_patched_sdk_product
+    local SDK_ROOT=""
+    for sdk_candidate in \
+        "$FLUTTER_ROOT/bin/cache/artifacts/engine/common/flutter_patched_sdk_product" \
+        "$FLUTTER_ROOT/bin/cache/artifacts/engine/common/flutter_patched_sdk" \
+        "$ENGINE_DIR/flutter_patched_sdk_product"; do
+        if [ -d "$sdk_candidate" ]; then
+            SDK_ROOT="$sdk_candidate"
+            break
+        fi
+    done
+
+    if [ -z "$SDK_ROOT" ]; then
+        echo "ERROR: flutter_patched_sdk_product not found." >&2
+        echo "       Searched in: $FLUTTER_ROOT/bin/cache/artifacts/engine/common/" >&2
+        exit 1
+    fi
+    echo "  SDK root:        $SDK_ROOT"
+
+    local DILL_OUT="$FLUTTER_APP/build/app.dill"
+    mkdir -p "$(dirname "$DILL_OUT")"
+
+    echo "  Compiling Dart sources to AOT kernel (app.dill)..."
+    "$DART_BIN" "$FRONTEND_SERVER" \
+        --sdk-root "$SDK_ROOT/" \
+        --target=flutter \
+        --no-print-incremental-dependencies \
+        -Ddart.vm.profile=false \
+        -Ddart.vm.product=true \
+        --delete-tostring-package-uri=dart:ui \
+        --delete-tostring-package-uri=package:flutter \
+        --aot \
+        --tfa \
+        --target-os linux \
+        --packages "$FLUTTER_APP/.dart_tool/package_config.json" \
+        --output-dill "$DILL_OUT" \
+        package:mininote/main.dart
+
+    if [ ! -f "$DILL_OUT" ] || [ ! -s "$DILL_OUT" ]; then
+        echo "ERROR: frontend_server failed to produce AOT kernel at $DILL_OUT" >&2
+        exit 1
+    fi
+
+    local DILL_SIZE
+    DILL_SIZE="$(wc -c < "$DILL_OUT")"
+    echo "  [OK] app.dill produced: $DILL_OUT ($DILL_SIZE bytes)"
+    AOT_KERNEL="$DILL_OUT"
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
-# gen_snapshot resolver: architecture-aware, deterministic, no fallback
+# Phase C: gen_snapshot resolver (architecture-specific, deterministic)
 # ─────────────────────────────────────────────────────────────────────────────
 resolve_gen_snapshot() {
     echo ""
-    echo "── Resolving gen_snapshot ────────────────────────────────────────────"
+    echo "── Phase C: Resolving gen_snapshot ───────────────────────────────────"
     echo "  Target arch:          $ARCH"
     echo "  Engine SHA:           $ENGINE_SHA"
     echo "  Expected cache dir:   $GEN_SNAPSHOT_EXPECTED_DIR"
 
     GEN_SNAPSHOT=""
-    local EXPECTED_PATH="$FLUTTER_ROOT/bin/cache/artifacts/engine/$GEN_SNAPSHOT_EXPECTED_DIR/gen_snapshot"
 
-    # Step 1: Check the architecture-specific cache path ONLY
-    if [ -x "$EXPECTED_PATH" ]; then
-        GEN_SNAPSHOT="$EXPECTED_PATH"
-        echo "  Found gen_snapshot (cache): $GEN_SNAPSHOT"
+    local CANDIDATES=()
+    if [ "$ARCH" = "amd64" ]; then
+        CANDIDATES+=(
+            "$ENGINE_DIR/gen_snapshot"
+            "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64-release/gen_snapshot"
+            "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64/gen_snapshot"
+        )
+    elif [ "$ARCH" = "arm64" ]; then
+        CANDIDATES+=(
+            "$ENGINE_DIR/gen_snapshot"
+            "$ENGINE_DIR/gen_snapshot_arm64_cross"
+            "$FLUTTER_ROOT/bin/cache/artifacts/engine/android-arm64-release/linux-x64/gen_snapshot"
+            "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-arm64-release/clang_x64/gen_snapshot"
+        )
     fi
 
-    # Step 2: If not in cache, fetch from Flutter infrastructure (exact Engine SHA)
-    if [ -z "$GEN_SNAPSHOT" ]; then
-        echo "  gen_snapshot not in cache at $EXPECTED_PATH"
-        echo "  Attempting to fetch from Flutter infrastructure (Engine SHA: $ENGINE_SHA)..."
-
-        local FETCH_DIR
-        FETCH_DIR="$(mktemp -d)"
-        local BASE_URL="https://storage.googleapis.com/flutter_infra_release/flutter/${ENGINE_SHA}"
-
-        case "$ARCH" in
-            amd64)
-                # linux-x64 gen_snapshot is inside linux-x64/artifacts.zip or linux-x64/linux-x64.zip
-                local FETCH_URL="${BASE_URL}/linux-x64/linux-x64.zip"
-                if curl -sSLf --max-time 180 "$FETCH_URL" -o "$FETCH_DIR/engine.zip" 2>/dev/null; then
-                    unzip -q -o "$FETCH_DIR/engine.zip" "gen_snapshot" -d "$FETCH_DIR" 2>/dev/null || true
-                    if [ ! -f "$FETCH_DIR/gen_snapshot" ]; then
-                        # Some archives have it at root, some in subdir
-                        unzip -q -o "$FETCH_DIR/engine.zip" -d "$FETCH_DIR" 2>/dev/null || true
+    for candidate in "${CANDIDATES[@]}"; do
+        if [ -x "$candidate" ]; then
+            # Verify it is runnable on the host (x86-64)
+            if file "$candidate" | grep -q "x86-64"; then
+                if [ "$ARCH" = "arm64" ]; then
+                    local VER_STR
+                    VER_STR="$("$candidate" --version 2>&1 || true)"
+                    if echo "$VER_STR" | grep -qi -E "(arm64|aarch64|simarm64)"; then
+                        GEN_SNAPSHOT="$candidate"
+                        echo "  Found arm64 cross gen_snapshot: $GEN_SNAPSHOT"
+                        break
                     fi
-                    if [ -f "$FETCH_DIR/gen_snapshot" ]; then
-                        chmod +x "$FETCH_DIR/gen_snapshot"
-                        GEN_SNAPSHOT="$FETCH_DIR/gen_snapshot"
-                        echo "  Fetched gen_snapshot from: $FETCH_URL"
-                    fi
+                else
+                    GEN_SNAPSHOT="$candidate"
+                    echo "  Found amd64 gen_snapshot: $GEN_SNAPSHOT"
+                    break
                 fi
-                ;;
-            arm64)
-                # The cross-build gen_snapshot for arm64 lives in:
-                # linux-arm64-release/clang_x64/gen_snapshot  (inside linux-arm64-release.zip)
-                local FETCH_URL="${BASE_URL}/linux-arm64-release/linux-arm64-release.zip"
-                if curl -sSLf --max-time 180 "$FETCH_URL" -o "$FETCH_DIR/engine.zip" 2>/dev/null; then
-                    unzip -q -o "$FETCH_DIR/engine.zip" -d "$FETCH_DIR" 2>/dev/null || true
-                    if [ -f "$FETCH_DIR/clang_x64/gen_snapshot" ]; then
-                        chmod +x "$FETCH_DIR/clang_x64/gen_snapshot"
-                        GEN_SNAPSHOT="$FETCH_DIR/clang_x64/gen_snapshot"
-                        echo "  Fetched arm64 gen_snapshot (clang_x64) from: $FETCH_URL"
-                    elif [ -f "$FETCH_DIR/gen_snapshot" ]; then
-                        # Sanity: it must be x86-64 to run on CI host
-                        chmod +x "$FETCH_DIR/gen_snapshot"
-                        GEN_SNAPSHOT="$FETCH_DIR/gen_snapshot"
-                        echo "  Fetched gen_snapshot from: $FETCH_URL"
-                    fi
-                fi
-                ;;
-        esac
-    fi
-
-    # Step 3: Try flutter precache as last resort before failing
-    if [ -z "$GEN_SNAPSHOT" ]; then
-        echo "  Attempting 'flutter precache --linux' to populate cache..."
-        flutter precache --linux 2>/dev/null || true
-        if [ -x "$EXPECTED_PATH" ]; then
-            GEN_SNAPSHOT="$EXPECTED_PATH"
-            echo "  Found gen_snapshot after precache: $GEN_SNAPSHOT"
+            fi
         fi
+    done
+
+    # If not found, run fetch-engine-artifacts.sh
+    if [ -z "$GEN_SNAPSHOT" ]; then
+        echo "  gen_snapshot not found in cache. Running fetch-engine-artifacts.sh..."
+        "$ROOT_DIR/scripts/fetch-engine-artifacts.sh" "$ARCH" "$ENGINE_SHA"
+        for candidate in "${CANDIDATES[@]}"; do
+            if [ -x "$candidate" ] && file "$candidate" | grep -q "x86-64"; then
+                GEN_SNAPSHOT="$candidate"
+                echo "  Found gen_snapshot after fetch: $GEN_SNAPSHOT"
+                break
+            fi
+        done
     fi
 
-    # ── HARD FAIL: no acceptable gen_snapshot found ──────────────────────────
     if [ -z "$GEN_SNAPSHOT" ]; then
         echo "" >&2
         echo "FATAL ERROR: Cannot find architecture-specific gen_snapshot for $ARCH." >&2
-        echo "" >&2
-        echo "  For $ARCH, the required binary is:" >&2
-        echo "    $EXPECTED_PATH" >&2
-        echo "" >&2
-        if [ "$ARCH" = "arm64" ]; then
-            echo "  This is the x64-hosted, AArch64-targeting AOT compiler." >&2
-            echo "  It is NOT the same as linux-x64/gen_snapshot (which emits x64 AOT)." >&2
-            echo "  DO NOT fall back to linux-x64/gen_snapshot for arm64 — this is wrong." >&2
-        fi
-        echo "" >&2
-        echo "  Engine SHA: $ENGINE_SHA" >&2
-        echo "  Expected Flutter infra URL (arm64):" >&2
-        echo "    https://storage.googleapis.com/flutter_infra_release/flutter/${ENGINE_SHA}/linux-arm64-release/linux-arm64-release.zip" >&2
-        echo "" >&2
-        echo "  If the artifact is missing from Flutter infra for this SHA," >&2
-        echo "  the engine must be built from source at revision: $ENGINE_SHA" >&2
         exit 1
     fi
 
-    # ── Validate: gen_snapshot must be x86-64 (host-runnable on CI) ──────────
-    local GS_FILE_OUT
-    GS_FILE_OUT="$(file "$GEN_SNAPSHOT")"
-    echo "  gen_snapshot file: $GS_FILE_OUT"
-
-    if ! echo "$GS_FILE_OUT" | grep -q "x86-64"; then
-        echo "" >&2
-        echo "FATAL ERROR: gen_snapshot at '$GEN_SNAPSHOT' is NOT an x86-64 binary." >&2
-        echo "  It cannot run on the x86-64 CI host." >&2
-        echo "  File: $GS_FILE_OUT" >&2
-        echo "  For arm64 cross-build you need clang_x64/gen_snapshot" >&2
-        echo "  (x64-executable, AArch64-targeting AOT compiler)." >&2
-        exit 1
-    fi
-
-    # ── Log gen_snapshot --version for traceability ───────────────────────────
-    echo "  gen_snapshot --version:"
-    local GS_VERSION
-    if GS_VERSION="$("$GEN_SNAPSHOT" --version 2>&1)"; then
-        echo "    $GS_VERSION"
-        # For arm64: --version should contain "simarm64" or "linux_arm64" or similar
-        # indicating it targets AArch64 even though it runs on x64
-        if [ "$ARCH" = "arm64" ]; then
-            if echo "$GS_VERSION" | grep -qi -E "(arm64|aarch64|simarm64|linux_arm64)"; then
-                echo "  [OK] gen_snapshot --version confirms arm64 target"
-            else
-                echo "  [WARN] gen_snapshot --version does not explicitly mention arm64." >&2
-                echo "         Version string: $GS_VERSION" >&2
-                echo "         Continuing — verify libapp.so arch after compilation." >&2
-            fi
-        fi
-    else
-        echo "    (--version returned non-zero; this is non-fatal for older gen_snapshot)" >&2
-    fi
-
+    echo "  gen_snapshot file: $(file "$GEN_SNAPSHOT")"
+    echo "  gen_snapshot version: $("$GEN_SNAPSHOT" --version 2>&1 | head -1 || true)"
     echo "  [OK] gen_snapshot resolved: $GEN_SNAPSHOT"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Phase C: Build libapp.so (AOT ELF) from app.dill
+# Phase D: Build libapp.so (AOT ELF) from app.dill
 # ─────────────────────────────────────────────────────────────────────────────
 build_aot_library() {
     echo ""
-    echo "── Phase C: Building libapp.so (AOT ELF) ─────────────────────────────"
+    echo "── Phase D: Building libapp.so (AOT ELF) ─────────────────────────────"
     echo "  Input (AOT kernel): $AOT_KERNEL"
     echo "  gen_snapshot:       $GEN_SNAPSHOT"
 
     local AOT_LIB_DIR="$ROOT_DIR/build/flutter-bundle/$ARCH/lib"
     mkdir -p "$AOT_LIB_DIR"
 
-    # gen_snapshot flags per Flutter docs for ELF AOT:
-    # --deterministic: reproducible output
-    # --snapshot_kind=app-aot-elf: ELF shared library (not assembly)
-    # --elf=<output>: output path for libapp.so
-    # --strip: strip debug symbols for smaller size (production)
-    # <app.dill>: the AOT kernel from frontend_server
-    #
-    # NOTE: NO --sim-use-hardfp or --no-sim-use-hardfp — these were arm32 simulator
-    # flags removed in Flutter 3.x. They are INVALID for arm64/amd64.
     echo "  Running gen_snapshot..."
     "$GEN_SNAPSHOT" \
         --deterministic \
@@ -336,15 +305,15 @@ build_aot_library() {
     fi
 
     AOT_LIB="$AOT_LIB_DIR/libapp.so"
-    echo "  [OK] libapp.so produced: $AOT_LIB"
+    echo "  [OK] libapp.so produced: $AOT_LIB ($(wc -c < "$AOT_LIB") bytes)"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Phase D: Validate libapp.so architecture
+# Phase E: Validate libapp.so architecture
 # ─────────────────────────────────────────────────────────────────────────────
 validate_aot_library() {
     echo ""
-    echo "── Phase D: Validating libapp.so architecture ────────────────────────"
+    echo "── Phase E: Validating libapp.so architecture ────────────────────────"
 
     local LIBAPP_FILE_OUT
     LIBAPP_FILE_OUT="$(file "$AOT_LIB")"
@@ -355,10 +324,6 @@ validate_aot_library() {
         echo "FATAL ERROR: libapp.so has WRONG architecture!" >&2
         echo "  Expected:   $ELF_ARCH_PATTERN" >&2
         echo "  Got:        $LIBAPP_FILE_OUT" >&2
-        if [ "$ARCH" = "arm64" ]; then
-            echo "  This means the WRONG gen_snapshot was used (likely linux-x64/gen_snapshot)." >&2
-            echo "  For arm64, ONLY linux-arm64-release/clang_x64/gen_snapshot is acceptable." >&2
-        fi
         exit 1
     fi
 
@@ -383,10 +348,11 @@ validate_aot_library() {
 # ─────────────────────────────────────────────────────────────────────────────
 # Execute the AOT pipeline phases
 # ─────────────────────────────────────────────────────────────────────────────
-build_flutter_bundle     # Phase A: flutter build bundle → assets + kernel_blob.bin
-resolve_gen_snapshot     # Phase B: find architecture-specific gen_snapshot
-build_aot_library        # Phase C: gen_snapshot kernel_blob.bin → libapp.so
-validate_aot_library     # Phase D: verify libapp.so architecture
+build_flutter_bundle     # Phase A: Flutter assets
+build_aot_kernel         # Phase B: frontend_server -> app.dill
+resolve_gen_snapshot     # Phase C: architecture-specific gen_snapshot
+build_aot_library        # Phase D: gen_snapshot -> libapp.so
+validate_aot_library     # Phase E: readelf & file arch check
 
 # ─── 7. Assemble bundle structure ─────────────────────────────────────────────
 echo ""

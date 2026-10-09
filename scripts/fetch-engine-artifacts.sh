@@ -119,47 +119,57 @@ echo "Fetching gen_snapshot for $ARCH..."
 
 case "$ARCH" in
     amd64|x86_64)
-        # gen_snapshot is inside linux-x64/linux-x64.zip
-        GS_URL="${BASE_URL}/linux-x64/linux-x64.zip"
         GS_DEST="$DEST_DIR/gen_snapshot"
-        if curl -sSLf --max-time 180 "$GS_URL" -o "$TMP_ZIP" 2>/dev/null; then
-            unzip -q -o "$TMP_ZIP" "gen_snapshot" -d "$DEST_DIR" 2>/dev/null || true
-            if [ -f "$GS_DEST" ]; then
-                chmod +x "$GS_DEST"
-                echo "  [OK] gen_snapshot (amd64) extracted to: $GS_DEST"
+        # 1. Check local Flutter SDK cache first
+        if [ -n "$FLUTTER_ROOT" ] && [ -x "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64-release/gen_snapshot" ]; then
+            cp "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64-release/gen_snapshot" "$GS_DEST"
+            chmod +x "$GS_DEST"
+            echo "  [OK] Copied gen_snapshot from Flutter cache (linux-x64-release)"
+        fi
+        # 2. If not found, download from linux-x64-release/linux-x64-flutter-gtk.zip
+        if [ ! -f "$GS_DEST" ]; then
+            GS_URL="${BASE_URL}/linux-x64-release/linux-x64-flutter-gtk.zip"
+            if curl -sSLf --max-time 180 "$GS_URL" -o "$TMP_ZIP" 2>/dev/null; then
+                unzip -q -o "$TMP_ZIP" "gen_snapshot" -d "$DEST_DIR" 2>/dev/null || true
+                if [ -f "$GS_DEST" ]; then
+                    chmod +x "$GS_DEST"
+                    echo "  [OK] gen_snapshot (amd64) extracted from: $GS_URL"
+                    if [ -n "$FLUTTER_ROOT" ]; then
+                        mkdir -p "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64-release"
+                        cp "$GS_DEST" "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64-release/gen_snapshot"
+                    fi
+                fi
             fi
         fi
         ;;
     arm64|aarch64)
-        # gen_snapshot for arm64 cross-build lives in:
-        # linux-arm64-release.zip → clang_x64/gen_snapshot
-        GS_URL="${BASE_URL}/linux-arm64-release/linux-arm64-release.zip"
-        GS_TMP="$(mktemp -d)"
-        GS_DEST="$DEST_DIR/gen_snapshot_arm64_cross"
-        if curl -sSLf --max-time 180 "$GS_URL" -o "$TMP_ZIP" 2>/dev/null; then
-            unzip -q -o "$TMP_ZIP" -d "$GS_TMP" 2>/dev/null || true
-            if [ -f "$GS_TMP/clang_x64/gen_snapshot" ]; then
-                cp "$GS_TMP/clang_x64/gen_snapshot" "$GS_DEST"
-                chmod +x "$GS_DEST"
-                echo "  [OK] gen_snapshot (arm64/clang_x64) extracted to: $GS_DEST"
-                # Also place at the Flutter SDK cache path for build-app.sh to find
-                if [ -n "$FLUTTER_ROOT" ]; then
-                    ARM64_CACHE="$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-arm64-release/clang_x64"
-                    mkdir -p "$ARM64_CACHE"
-                    cp "$GS_DEST" "$ARM64_CACHE/gen_snapshot"
-                    chmod +x "$ARM64_CACHE/gen_snapshot"
-                    echo "  [OK] Cached gen_snapshot to: $ARM64_CACHE/gen_snapshot"
-                fi
-            else
-                echo "  WARNING: clang_x64/gen_snapshot not found in linux-arm64-release.zip" >&2
-                echo "  Contents of zip:" >&2
-                ls -la "$GS_TMP/" >&2 || true
-                ls -la "$GS_TMP/clang_x64/" >&2 2>/dev/null || true
-            fi
-        else
-            echo "  WARNING: linux-arm64-release.zip not downloadable from $GS_URL" >&2
+        GS_DEST="$DEST_DIR/gen_snapshot"
+        GS_CROSS="$DEST_DIR/gen_snapshot_arm64_cross"
+        # 1. Check local Flutter SDK cache (android-arm64-release/linux-x64/gen_snapshot)
+        if [ -n "$FLUTTER_ROOT" ] && [ -x "$FLUTTER_ROOT/bin/cache/artifacts/engine/android-arm64-release/linux-x64/gen_snapshot" ]; then
+            cp "$FLUTTER_ROOT/bin/cache/artifacts/engine/android-arm64-release/linux-x64/gen_snapshot" "$GS_DEST"
+            cp "$GS_DEST" "$GS_CROSS"
+            chmod +x "$GS_DEST" "$GS_CROSS"
+            echo "  [OK] Copied arm64 cross gen_snapshot from Flutter cache (android-arm64-release/linux-x64)"
         fi
-        rm -rf "$GS_TMP"
+        # 2. If not found, download from android-arm64-release/linux-x64.zip
+        if [ ! -f "$GS_DEST" ]; then
+            GS_URL="${BASE_URL}/android-arm64-release/linux-x64.zip"
+            if curl -sSLf --max-time 180 "$GS_URL" -o "$TMP_ZIP" 2>/dev/null; then
+                unzip -q -o "$TMP_ZIP" "gen_snapshot" -d "$DEST_DIR" 2>/dev/null || true
+                if [ -f "$GS_DEST" ]; then
+                    cp "$GS_DEST" "$GS_CROSS"
+                    chmod +x "$GS_DEST" "$GS_CROSS"
+                    echo "  [OK] gen_snapshot (arm64 cross) extracted from: $GS_URL"
+                    if [ -n "$FLUTTER_ROOT" ]; then
+                        mkdir -p "$FLUTTER_ROOT/bin/cache/artifacts/engine/android-arm64-release/linux-x64"
+                        cp "$GS_DEST" "$FLUTTER_ROOT/bin/cache/artifacts/engine/android-arm64-release/linux-x64/gen_snapshot"
+                        mkdir -p "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-arm64-release/clang_x64"
+                        cp "$GS_DEST" "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-arm64-release/clang_x64/gen_snapshot"
+                    fi
+                fi
+            fi
+        fi
         ;;
 esac
 

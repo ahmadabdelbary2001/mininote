@@ -189,12 +189,12 @@ jobs:
           rm -f "/tmp/${FLUTTER_TAR}"
           echo "${HOME}/flutter/bin" >> "$GITHUB_PATH"
 
-      - name: Flutter precache (Linux artifacts)
+      - name: Flutter precache (Linux & cross-arch artifacts)
         run: |
           set -euo pipefail
           # Ensure the cache directory is writable before Flutter touches it
           mkdir -p "${HOME}/flutter/bin/cache"
-          flutter precache --linux
+          flutter precache --linux --android
           flutter --version
 
       - name: Resolve Engine SHA & validate toolchain
@@ -219,13 +219,13 @@ jobs:
           # Verify frontend_server
           echo ""
           echo "frontend_server candidates:"
-          find "${FLUTTER_ROOT}/bin/cache/artifacts/engine" -name "frontend_server.dart.snapshot" \
+          find "${FLUTTER_ROOT}/bin/cache" -name "*frontend_server*.snapshot" \
               2>/dev/null | head -5 || echo "  (none in cache yet)"
 
           # Verify flutter_patched_sdk_product
           echo ""
           echo "flutter_patched_sdk_product:"
-          find "${FLUTTER_ROOT}/bin/cache/artifacts/engine" -name "flutter_patched_sdk_product" \
+          find "${FLUTTER_ROOT}/bin/cache/artifacts/engine" -name "*flutter_patched_sdk*" \
               -type d 2>/dev/null | head -3 || echo "  (none in cache yet)"
 
           echo ""
