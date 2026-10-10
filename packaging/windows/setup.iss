@@ -2,7 +2,7 @@
 [Setup]
 AppId={{D3EFA101-7290-4821-9876-FA4888123456}
 AppName=MiniNote
-AppVersion=1.0.4
+AppVersion=1.0.5
 AppPublisher=Ahmad Abdelbary
 AppPublisherURL=https://github.com/ahmadabdelbary2001/mininote
 DefaultDirName={autopf}\MiniNote

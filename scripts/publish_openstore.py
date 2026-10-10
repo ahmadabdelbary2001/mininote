@@ -12,10 +12,10 @@ def get_package_info():
         try:
             with open(manifest_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("name", "mininotes"), data.get("version", "1.0.4")
+                return data.get("name", "mininotes"), data.get("version", "1.0.5")
         except Exception:
             pass
-    return "mininotes", "1.0.4"
+    return "mininotes", "1.0.5"
 
 def generate_changelog():
     for p in [".ci/release-notes/release-notes.md", "release-notes.md"]:
@@ -27,7 +27,7 @@ def generate_changelog():
                         return c
             except Exception:
                 pass
-    tag = os.environ.get("GITHUB_REF_NAME", "v1.0.4")
+    tag = os.environ.get("GITHUB_REF_NAME", "v1.0.5")
     return f"""## Changes in {tag}
 
 ### Features
@@ -113,7 +113,7 @@ def submit_to_openstore(click_path, api_key, changelog, package_name="mininotes"
             data=bytes(body),
             headers={
                 "Content-Type": f"multipart/form-data; boundary={boundary}",
-                "User-Agent": "clickable-ut/8.10.0 MiniNotes/1.0.4",
+                "User-Agent": "clickable-ut/8.10.0 MiniNotes/1.0.5",
             },
             method="POST"
         )

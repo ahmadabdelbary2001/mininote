@@ -52,33 +52,33 @@
 
     <screenshots>
         <screenshot type="default">
-            <image>https://raw.githubusercontent.com/ahmadabdelbary2001/mininote/v1.0.4/Screenshots/1.png</image>
+            <image>https://raw.githubusercontent.com/ahmadabdelbary2001/mininote/v1.0.5/Screenshots/1.png</image>
             <caption>MiniNotes application interface</caption>
         </screenshot>
 
         <screenshot>
-            <image>https://raw.githubusercontent.com/ahmadabdelbary2001/mininote/v1.0.4/Screenshots/2.png</image>
+            <image>https://raw.githubusercontent.com/ahmadabdelbary2001/mininote/v1.0.5/Screenshots/2.png</image>
             <caption>MiniNotes note management interface</caption>
         </screenshot>
 
         <screenshot>
-            <image>https://raw.githubusercontent.com/ahmadabdelbary2001/mininote/v1.0.4/Screenshots/3.png</image>
+            <image>https://raw.githubusercontent.com/ahmadabdelbary2001/mininote/v1.0.5/Screenshots/3.png</image>
             <caption>Creating and editing notes in MiniNotes</caption>
         </screenshot>
 
         <screenshot>
-            <image>https://raw.githubusercontent.com/ahmadabdelbary2001/mininote/v1.0.4/Screenshots/4.png</image>
+            <image>https://raw.githubusercontent.com/ahmadabdelbary2001/mininote/v1.0.5/Screenshots/4.png</image>
             <caption>MiniNotes note editing interface</caption>
         </screenshot>
 
         <screenshot>
-            <image>https://raw.githubusercontent.com/ahmadabdelbary2001/mininote/v1.0.4/Screenshots/5.png</image>
+            <image>https://raw.githubusercontent.com/ahmadabdelbary2001/mininote/v1.0.5/Screenshots/5.png</image>
             <caption>MiniNotes notes workflow</caption>
         </screenshot>
     </screenshots>
 
     <releases>
-        <release version="1.0.4" date="2026-09-22">
+        <release version="1.0.5" date="2026-09-22">
             <description>
                 <p>
                     Added Flatpak packaging and GitHub Actions CI, alongside continued Linux packaging and Ubuntu Touch multi-architecture
