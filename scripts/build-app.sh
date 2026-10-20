@@ -27,16 +27,19 @@ case "$ARCH" in
         LINKER="gcc"
         ELF_ARCH_PATTERN="x86-64"
         ELF_MACHINE_PATTERN="Advanced Micro Devices X86-64"
-        # amd64: release gen_snapshot lives in linux-x64-release/gen_snapshot
-        GEN_SNAPSHOT_EXPECTED_DIR="linux-x64-release"
         ;;
     arm64)
         RUST_TARGET="aarch64-unknown-linux-gnu"
-        LINKER="aarch64-linux-gnu-gcc"
+        # Native ARM64 runners have no cross compiler installed; the regular
+        # gcc already targets aarch64 there.  Fall back to it when the cross
+        # toolchain is not present.
+        if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
+            LINKER="aarch64-linux-gnu-gcc"
+        else
+            LINKER="gcc"
+        fi
         ELF_ARCH_PATTERN="aarch64"
         ELF_MACHINE_PATTERN="AArch64"
-        # arm64 cross-build: x64-hosted AArch64-targeting gen_snapshot
-        GEN_SNAPSHOT_EXPECTED_DIR="android-arm64-release/linux-x64"
         ;;
     armhf)
         echo "=========================================================================="
@@ -75,9 +78,17 @@ echo "  Target arch:    $ARCH"
 echo "══════════════════════════════════════════════════════════"
 echo ""
 
-# ─── 1. Fetch matching Flutter engine artifacts ───────────────────────────────
-"$ROOT_DIR/scripts/fetch-engine-artifacts.sh" "$ARCH" "$ENGINE_SHA"
+# ─── 1. Build the matching RELEASE Flutter engine from source ────────────────
+# The engine published on the Flutter CDN is a JIT/debug build and cannot
+# load the AOT snapshot we produce below, so the engine (and its gen_snapshot)
+# are built from the exact engine revision of the installed Flutter SDK.
+"$ROOT_DIR/scripts/build-engine.sh" "$ARCH" "$ENGINE_SHA"
 ENGINE_DIR="$ROOT_DIR/build/engine-artifacts/${ARCH}"
+
+if [ ! -f "$ENGINE_DIR/libflutter_engine.so" ] || [ ! -f "$ENGINE_DIR/gen_snapshot" ]; then
+    echo "ERROR: release engine artifacts are incomplete in $ENGINE_DIR" >&2
+    exit 1
+fi
 
 # ─── 2. Build flutter-embedded-linux Wayland embedder ────────────────────────
 "$ROOT_DIR/scripts/build-embedder.sh" "$ARCH"
@@ -152,7 +163,7 @@ build_aot_kernel() {
     echo "  frontend_server: $FRONTEND_SERVER"
 
     # 2. Locate Dart runner
-    local DART_BIN="$FLUTTER_ROOT/bin/dart"
+    DART_BIN="$FLUTTER_ROOT/bin/dart"
     if [[ "$FRONTEND_SERVER" == *"frontend_server_aot"* ]] && [ -x "$FLUTTER_ROOT/bin/cache/dart-sdk/bin/dartaotruntime" ]; then
         DART_BIN="$FLUTTER_ROOT/bin/cache/dart-sdk/bin/dartaotruntime"
     fi
@@ -245,6 +256,7 @@ tree_shake_icons() {
     done
 
     local DART_CMD="${DART_BIN:-$FLUTTER_ROOT/bin/dart}"
+    echo "  Dart runner:     $DART_CMD"
 
     if [ -n "$CONST_FINDER" ] && [ -n "$FONT_SUBSET" ]; then
         local TMP_OUTPUT="$(mktemp --suffix=.otf)"
@@ -285,70 +297,30 @@ except Exception:
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Phase C: gen_snapshot resolver (architecture-specific, deterministic)
+# Phase C: gen_snapshot resolver (release engine build only)
 # ─────────────────────────────────────────────────────────────────────────────
 resolve_gen_snapshot() {
     echo ""
     echo "── Phase C: Resolving gen_snapshot ───────────────────────────────────"
     echo "  Target arch:          $ARCH"
     echo "  Engine SHA:           $ENGINE_SHA"
-    echo "  Expected cache dir:   $GEN_SNAPSHOT_EXPECTED_DIR"
+    echo "  Engine dir:           $ENGINE_DIR"
 
-    GEN_SNAPSHOT=""
+    GEN_SNAPSHOT="$ENGINE_DIR/gen_snapshot"
 
-    local CANDIDATES=()
-    if [ "$ARCH" = "amd64" ]; then
-        CANDIDATES+=(
-            "$ENGINE_DIR/gen_snapshot"
-            "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64-release/gen_snapshot"
-            "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-x64/gen_snapshot"
-        )
-    elif [ "$ARCH" = "arm64" ]; then
-        CANDIDATES+=(
-            "$ENGINE_DIR/gen_snapshot"
-            "$ENGINE_DIR/gen_snapshot_arm64_cross"
-            "$FLUTTER_ROOT/bin/cache/artifacts/engine/android-arm64-release/linux-x64/gen_snapshot"
-            "$FLUTTER_ROOT/bin/cache/artifacts/engine/linux-arm64-release/clang_x64/gen_snapshot"
-        )
-    fi
-
-    for candidate in "${CANDIDATES[@]}"; do
-        if [ -x "$candidate" ]; then
-            # Verify it is runnable on the host (x86-64)
-            if file "$candidate" | grep -q "x86-64"; then
-                if [ "$ARCH" = "arm64" ]; then
-                    local VER_STR
-                    VER_STR="$("$candidate" --version 2>&1 || true)"
-                    if echo "$VER_STR" | grep -qi -E "(arm64|aarch64|simarm64)"; then
-                        GEN_SNAPSHOT="$candidate"
-                        echo "  Found arm64 cross gen_snapshot: $GEN_SNAPSHOT"
-                        break
-                    fi
-                else
-                    GEN_SNAPSHOT="$candidate"
-                    echo "  Found amd64 gen_snapshot: $GEN_SNAPSHOT"
-                    break
-                fi
-            fi
-        fi
-    done
-
-    # If not found, run fetch-engine-artifacts.sh
-    if [ -z "$GEN_SNAPSHOT" ]; then
-        echo "  gen_snapshot not found in cache. Running fetch-engine-artifacts.sh..."
-        "$ROOT_DIR/scripts/fetch-engine-artifacts.sh" "$ARCH" "$ENGINE_SHA"
-        for candidate in "${CANDIDATES[@]}"; do
-            if [ -x "$candidate" ] && file "$candidate" | grep -q "x86-64"; then
-                GEN_SNAPSHOT="$candidate"
-                echo "  Found gen_snapshot after fetch: $GEN_SNAPSHOT"
-                break
-            fi
-        done
-    fi
-
-    if [ -z "$GEN_SNAPSHOT" ]; then
+    if [ ! -x "$GEN_SNAPSHOT" ]; then
         echo "" >&2
-        echo "FATAL ERROR: Cannot find architecture-specific gen_snapshot for $ARCH." >&2
+        echo "FATAL ERROR: $GEN_SNAPSHOT is missing or not executable." >&2
+        echo "             The AOT snapshot must be produced by the gen_snapshot" >&2
+        echo "             of the very same release engine build (see build-engine.sh)." >&2
+        exit 1
+    fi
+
+    # gen_snapshot has to run on the build host.
+    if ! file "$GEN_SNAPSHOT" | grep -qi "x86-64\|aarch64\|arm64"; then
+        echo "" >&2
+        echo "FATAL ERROR: gen_snapshot is not a runnable host binary." >&2
+        file "$GEN_SNAPSHOT" >&2
         exit 1
     fi
 
@@ -421,6 +393,12 @@ validate_aot_library() {
     fi
 
     echo "  [OK] libapp.so architecture validation passed for $ARCH"
+
+    # The snapshot must be a product-mode AOT build that matches the release
+    # engine; otherwise the engine aborts on the device while loading it.
+    echo ""
+    echo "── Phase E.2: Validating libapp.so product mode ────────────────────"
+    python3 "$ROOT_DIR/scripts/check-aot-features.py" "$AOT_LIB" "$ARCH"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────

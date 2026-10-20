@@ -20,7 +20,7 @@ void main() {
     });
 
     test('Note.copyWith updates fields correctly', () {
-      final note = const Note(
+      const note = Note(
         id: 1,
         title: 'Old Title',
         content: 'Old Content',

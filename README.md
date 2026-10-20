@@ -26,14 +26,14 @@ Cargo    : 1.93.1
 
 MiniNotes is a small offline-first notes application built with **C++17, QML, Qt and SQLite**. It is designed as a native Qt application with a layered architecture, local persistence, touch-friendly UI, and reproducible builds for Ubuntu Touch and Linux.
 
-> **Development version: 1.0.5**
+> **Development version: 1.0.6**
 > **Status: Experimental / Development**
 
 ## Status
 
 | Area                       | Current state                                |
 | -------------------------- | -------------------------------------------- |
-| Application version        | **1.0.5**                                    |
+| Application version        | **1.0.6**                                    |
 | Ubuntu Touch framework     | `ubuntu-touch-24.04-1.x`                     |
 | Ubuntu Touch Click targets | `arm64`, `armhf`, `amd64`                    |
 | Linux desktop              | x86_64                                       |
@@ -442,11 +442,63 @@ MiniNotes uses:
 
 ```text
 Framework: ubuntu-touch-24.04-1.x
-Builder: CMake
-Packaging: Clickable
+UI:        Flutter (eLinux embedder) + Rust runner
+Packaging: Click
 ```
 
-Clickable 8 supports explicit architecture selection with `--arch`, which selects the appropriate build environment and output directory.
+### The release Flutter engine is built from source
+
+The engine artifacts published on the Flutter CDN (`linux-*-embedder.zip`)
+contain a **JIT** engine. Flutter's own documentation states that the engine
+shipped for embedders "assumes that the mode of operation is JIT" and is
+therefore **incompatible with AOT snapshots** — pairing it with an AOT
+`libapp.so` aborts on the device.
+
+`scripts/build-engine.sh` therefore builds the engine from source, in
+`--runtime-mode=release`, from the exact engine revision of the installed
+Flutter SDK (`bin/internal/engine.version`). The same build also produces the
+`gen_snapshot` used for the AOT step, so the engine and the snapshot always
+come from one and the same source tree and their Dart VM *features strings*
+match.
+
+```bash
+# Build the release engine for one architecture (amd64 | arm64)
+bash scripts/build-engine.sh amd64
+```
+
+The artifacts are placed in `build/engine-artifacts/<arch>/`:
+
+| File                          | Purpose                                        |
+| ----------------------------- | ---------------------------------------------- |
+| `libflutter_engine.so`       | release engine (AOT capable)                    |
+| `gen_snapshot`                | product-mode AOT compiler                       |
+| `icudtl.dat`                  | ICU data                                        |
+| `include/flutter_embedder.h`  | embedder API header                             |
+| `engine.version`              | the engine revision the artifacts were built from |
+
+The build takes roughly 30–60 minutes, so the CI caches the directory.
+
+### Full build
+
+```bash
+# Builds the engine, the eLinux embedder, the Rust runner, the AOT snapshot
+# and finally the .click package.
+bash scripts/build-app.sh arm64
+```
+
+The AOT pipeline is:
+
+```text
+flutter build bundle            → flutter_assets/ (no JIT kernel)
+frontend_server (AOT)           → app.dill (true AOT kernel)
+gen_snapshot (release engine)   → libapp.so (AOT ELF, product mode)
+assemble + validate + click     → mininotes_<version>_<arch>.click
+```
+
+`scripts/check-aot-features.py` verifies that `libapp.so` really is a
+product-mode snapshot for the target architecture; a snapshot that carries
+`no-dedup_instructions` (or the wrong architecture) is rejected before
+packaging.
 
 ### Install Clickable
 
@@ -670,7 +722,7 @@ vMAJOR.MINOR.PATCH
 Example:
 
 ```text
-v1.0.5
+v1.0.6
 ```
 
 The application version is taken from:
@@ -684,8 +736,8 @@ The release tag must match the application version.
 For example:
 
 ```text
-CMakeLists.txt → 1.0.5
-Git tag        → v1.0.5
+CMakeLists.txt → 1.0.6
+Git tag        → v1.0.6
 ```
 
 A mismatch stops the release pipeline.
@@ -772,7 +824,7 @@ The normal release flow is:
 14. Maintain Flatpak / Flathub separately
 ```
 
-For the current Flatpak work, `v1.0.5` is the first planned release version containing the Flatpak packaging and CI integration.
+For the current Flatpak work, `v1.0.6` is the first planned release version containing the Flatpak packaging and CI integration.
 
 ## Data and Persistence
 

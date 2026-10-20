@@ -6,6 +6,7 @@ pub mod sys;
 
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 pub use sys::{FlutterDesktopViewMode, FlutterDesktopViewRotation};
@@ -197,6 +198,9 @@ impl Drop for FlutterEngine {
 pub struct FlutterViewController {
     controller: sys::FlutterDesktopViewControllerRef,
     view: sys::FlutterDesktopViewRef,
+    /// The engine is owned by the view controller; we only keep the handle so
+    /// that the event loop can pump the engine's message queue.
+    engine: sys::FlutterDesktopEngineRef,
 }
 
 impl FlutterViewController {
@@ -227,8 +231,13 @@ impl FlutterViewController {
         }
 
         let view = unsafe { sys::FlutterDesktopViewControllerGetView(controller) };
+        let controller_engine = unsafe { sys::FlutterDesktopViewControllerGetEngine(controller) };
 
-        Ok(Self { controller, view })
+        Ok(Self {
+            controller,
+            view,
+            engine: controller_engine,
+        })
     }
 
     /// Dispatches events and renders frames in the main event loop
@@ -239,10 +248,56 @@ impl FlutterViewController {
         unsafe { sys::FlutterDesktopViewDispatchEvent(self.view) }
     }
 
-    /// Runs the Wayland event loop until the window is closed
+    /// The refresh rate the view is rendered at, in frames per second.
+    pub fn frame_rate(&self) -> i32 {
+        if self.view.is_null() {
+            return 60;
+        }
+        let rate = unsafe { sys::FlutterDesktopViewGetFrameRate(self.view) };
+        if rate <= 0 {
+            60
+        } else {
+            rate
+        }
+    }
+
+    /// Runs the Wayland event loop until the window is closed.
+    ///
+    /// This mirrors the reference embedder loop: dispatch the pending Wayland
+    /// event, wait for the scheduled Flutter event, pump the engine's message
+    /// queue and reschedule.  Without pumping the message queue the Dart
+    /// isolate would never run its timers or microtasks.
     pub fn run_event_loop(&self) {
+        let mut next_flutter_event_time = Instant::now();
+
         while self.dispatch_event() {
-            // events processed
+            // Wait until the next scheduled event.
+            let now = Instant::now();
+            let wait_duration = next_flutter_event_time.saturating_duration_since(now);
+            if !wait_duration.is_zero() {
+                std::thread::sleep(wait_duration);
+            }
+
+            // Process any pending events in the Flutter engine. It returns the
+            // number of nanoseconds until the next scheduled event (or
+            // u64::MAX when there is none).
+            let wait_duration = if self.engine.is_null() {
+                u64::MAX
+            } else {
+                unsafe { sys::FlutterDesktopEngineProcessMessages(self.engine) }
+            };
+
+            let now = Instant::now();
+            let next_event_time = if wait_duration != u64::MAX {
+                now + Duration::from_nanos(wait_duration)
+            } else {
+                // No scheduled event: wait for the next frame.
+                let frame_rate = self.frame_rate();
+                let frame_millis = (1_000_000.0 / frame_rate as f64) as u64;
+                now + Duration::from_millis(frame_millis.max(1))
+            };
+
+            next_flutter_event_time = std::cmp::max(next_flutter_event_time, next_event_time);
         }
     }
 }

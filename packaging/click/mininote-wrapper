@@ -5,11 +5,11 @@
 set -e
 HERE="$(dirname "$(readlink -f "${0}")")"
 
-# ── Library & binary paths ─────────────────────────────────────────────────
+# ---------------------------------------------------------------- libraries --
 export LD_LIBRARY_PATH="${HERE}/lib:${HERE}:${LD_LIBRARY_PATH:-}"
 export PATH="${HERE}:${PATH}"
 
-# ── Wayland / EGL platform ────────────────────────────────────────────────
+# ------------------------------------------------- Wayland / EGL platform --
 export EGL_PLATFORM="wayland"
 export XDG_SESSION_TYPE="wayland"
 export GDK_BACKEND="wayland"
@@ -18,7 +18,7 @@ export CLUTTER_BACKEND="wayland"
 export SDL_VIDEODRIVER="wayland"
 export FLUTTER_BUNDLE_DIR="${HERE}"
 
-# ── Ubuntu Touch AppArmor confinement ─────────────────────────────────────
+# ------------------------------------------------- Ubuntu Touch confinement --
 # Confined packages can only write to:
 #   $HOME/.local/share/<pkg>  (data)
 #   $HOME/.cache/<pkg>        (cache)
@@ -36,7 +36,7 @@ export TMPDIR="${XDG_CACHE_HOME}/tmp"
 export XDG_DATA_DIRS="${HERE}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 mkdir -p "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}" "${TMPDIR}"
 
-# ── Wayland display detection ─────────────────────────────────────────────
+# ---------------------------------------------------- Wayland display detect --
 if [ -z "${WAYLAND_DISPLAY:-}" ]; then
     if [ -S "${XDG_RUNTIME_DIR}/wayland-0" ]; then
         export WAYLAND_DISPLAY="wayland-0"
@@ -45,7 +45,7 @@ if [ -z "${WAYLAND_DISPLAY:-}" ]; then
     fi
 fi
 
-# ── Diagnostic / debug mode ───────────────────────────────────────────────
+# --------------------------------------------------------- Diagnostic mode --
 if [ "${MININOTE_DEBUG:-0}" = "1" ] || [ "${DEBUG:-0}" = "1" ]; then
     export FLUTTER_LOG_LEVELS="${FLUTTER_LOG_LEVELS:-TRACE}"
     echo "=== [MiniNotes Diagnostic Startup] ==="
@@ -65,7 +65,7 @@ if [ "${MININOTE_DEBUG:-0}" = "1" ] || [ "${DEBUG:-0}" = "1" ]; then
         if [ -f "$lib" ]; then
             echo "  [OK]     $lib"
         else
-            echo "  [MISS]   $lib  ← MISSING — app will crash!"
+            echo "  [MISS]   $lib  - MISSING, the app will crash!"
         fi
     done
     if [ -f "${HERE}/lib/libapp.so" ]; then
@@ -77,15 +77,15 @@ if [ "${MININOTE_DEBUG:-0}" = "1" ] || [ "${DEBUG:-0}" = "1" ]; then
     if [ -d "${HERE}/data/flutter_assets" ]; then
         echo "  [OK]     data/flutter_assets exists"
     else
-        echo "  [MISS]   data/flutter_assets MISSING — engine will abort!"
+        echo "  [MISS]   data/flutter_assets MISSING - the engine will abort!"
     fi
     if [ -f "${HERE}/data/icudtl.dat" ]; then
         echo "  [OK]     data/icudtl.dat exists"
     else
-        echo "  [MISS]   data/icudtl.dat MISSING — ICU init will fail!"
+        echo "  [MISS]   data/icudtl.dat MISSING - ICU init will fail!"
     fi
     echo "======================================="
 fi
 
-# ── Launch ────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------- launch --
 exec "${HERE}/mininote" "$@"

@@ -3,13 +3,16 @@
 #
 # Commit: 4d95294030d703df9b3448d0db5f72adbab7416e  (NotKit/flutter-embedded-linux)
 #
-# Maliit note: the embedder CMake requires maliit-glib headers when the
-# on-screen keyboard backend is enabled.  maliit-glib-dev is not shipped in
-# Ubuntu 24.04's main/universe repos.  Since Lomiri on Ubuntu Touch handles
-# OSK input via its own IPC (independent of the embedder's GLib loop), we
-# patch cmake/package.cmake after clone to make maliit-glib *optional* rather
-# than *required*.  The resulting .so still works correctly on-device; only
-# the build-time GLib notification path is disabled.
+# The embedder links against the *release* Flutter engine produced by
+# scripts/build-engine.sh.  The engine published on the Flutter CDN is a
+# JIT/debug build and cannot load an AOT snapshot, so it must not be used
+# here.
+#
+# Maliit note: the embedder includes <maliit-glib/maliitbus.h> unconditionally
+# (on-screen keyboard support), so the maliit-glib development files have to
+# be installed (libmaliit-glib-dev, available in Ubuntu 24.04 universe).  The
+# CMake dependency is downgraded from REQUIRED to optional so that a missing
+# package produces a clear compile error instead of a hard CMake failure.
 set -euo pipefail
 
 ARCH="${1:-amd64}"
@@ -21,14 +24,14 @@ ENGINE_DIR="$ROOT_DIR/build/engine-artifacts/${ARCH}"
 
 echo "Building flutter-embedded-linux for $ARCH (Revision: $EMBEDDER_REV)..."
 
-# ── Ensure libflutter_engine.so is present ────────────────────────────────
+# ── Ensure the release engine is present ─────────────────────────────────
 if [ ! -f "$ENGINE_DIR/libflutter_engine.so" ]; then
-    echo "Engine artifact missing at $ENGINE_DIR/libflutter_engine.so. Fetching..."
-    "$ROOT_DIR/scripts/fetch-engine-artifacts.sh" "$ARCH"
+    echo "Release engine missing at $ENGINE_DIR/libflutter_engine.so. Building it..."
+    "$ROOT_DIR/scripts/build-engine.sh" "$ARCH"
 fi
 
 if [ ! -f "$ENGINE_DIR/libflutter_engine.so" ]; then
-    echo "ERROR: libflutter_engine.so still missing after fetch — cannot build embedder for $ARCH" >&2
+    echo "ERROR: libflutter_engine.so still missing — cannot build embedder for $ARCH" >&2
     exit 1
 fi
 
@@ -41,7 +44,7 @@ if [ ! -d "$SRC_DIR" ]; then
     git -C "$SRC_DIR" checkout -q FETCH_HEAD
 fi
 
-# ── Patch: make maliit-glib optional (not available in Ubuntu 24.04) ──────
+# ── Patch: make maliit-glib optional (not available in every rootfs) ─────
 # The pkg_search_module call for maliit-glib uses REQUIRED in this commit.
 # We downgrade it to a soft dependency so CMake can proceed without the
 # headers installed; the final .so does not need maliit at runtime on UT.
@@ -54,6 +57,21 @@ if [ -f "$PACKAGE_CMAKE" ]; then
     else
         echo "  [OK] cmake/package.cmake maliit-glib already optional or absent"
     fi
+fi
+
+# The on-screen keyboard plugin includes the maliit-glib headers directly, so
+# the development package is mandatory for the build to succeed.
+if ! pkg-config --exists maliit-glib 2>/dev/null; then
+    echo "ERROR: maliit-glib development files are required by the eLinux embedder." >&2
+    echo "       Install them with: sudo apt-get install libmaliit-glib-dev" >&2
+    exit 1
+fi
+
+# The content-hub clipboard support of this embedder revision needs GIO.
+if ! pkg-config --exists gio-2.0 2>/dev/null; then
+    echo "ERROR: gio-2.0 development files are required by the eLinux embedder." >&2
+    echo "       Install them with: sudo apt-get install libglib2.0-dev" >&2
+    exit 1
 fi
 
 # ── Patch: Add missing <cstdint> includes for Clang 18 / GCC 13+ ──────────
@@ -110,10 +128,19 @@ CMAKE_BUILD_DIR="$ROOT_DIR/build/embedder-build-${ARCH}"
 rm -rf "$CMAKE_BUILD_DIR"
 mkdir -p "$CMAKE_BUILD_DIR"
 
+# Native builds (the CI uses a native runner per architecture) must not use
+# the cross-compilation flags, they would break the host toolchain.
+HOST_MACHINE="$(uname -m)"
+NATIVE_BUILD=false
+case "${ARCH}:${HOST_MACHINE}" in
+    amd64:x86_64|arm64:aarch64|arm64:arm64) NATIVE_BUILD=true ;;
+esac
+
 EXTRA_CMAKE_ARGS=()
-if [ "$ARCH" = "arm64" ]; then
+if [ "$ARCH" = "arm64" ] && [ "$NATIVE_BUILD" = "false" ]; then
+    # Cross build from an x86_64 host.
     export PKG_CONFIG_PATH="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:${PKG_CONFIG_PATH:-}"
-    export PKG_CONFIG_LIBDIR="/usr/lib/aarch64-linux-gnu/pkgconfig"
+    export PKG_CONFIG_LIBDIR="/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig"
     EXTRA_CMAKE_ARGS+=(
         "-DCMAKE_SYSTEM_NAME=Linux"
         "-DCMAKE_SYSTEM_PROCESSOR=aarch64"
@@ -121,7 +148,7 @@ if [ "$ARCH" = "arm64" ]; then
         "-DCMAKE_CXX_FLAGS=${GLOBAL_CXX_FLAGS}"
         "-DCMAKE_C_FLAGS=${GLOBAL_C_FLAGS}"
     )
-elif [ "$ARCH" = "amd64" ]; then
+elif [ "$ARCH" = "amd64" ] || { [ "$ARCH" = "arm64" ] && [ "$NATIVE_BUILD" = "true" ]; }; then
     EXTRA_CMAKE_ARGS+=(
         "-DCMAKE_CXX_FLAGS=${GLOBAL_CXX_FLAGS}"
         "-DCMAKE_C_FLAGS=${GLOBAL_C_FLAGS}"
@@ -151,6 +178,11 @@ cmake --build "$CMAKE_BUILD_DIR" --config Release --target flutter_elinux_waylan
 # ── Install to engine artifacts directory ─────────────────────────────────
 if [ -f "$CMAKE_BUILD_DIR/libflutter_elinux_wayland.so" ]; then
     cp "$CMAKE_BUILD_DIR/libflutter_elinux_wayland.so" "$ENGINE_DIR/libflutter_elinux_wayland.so"
+    # The embedder is built with CMAKE_SKIP_RPATH, so give it an $ORIGIN RPATH
+    # to find libflutter_engine.so next to it inside the Click bundle.
+    if command -v patchelf >/dev/null 2>&1; then
+        patchelf --set-rpath '$ORIGIN' "$ENGINE_DIR/libflutter_elinux_wayland.so" || true
+    fi
     echo "libflutter_elinux_wayland.so built successfully for $ARCH → $ENGINE_DIR"
 else
     echo "ERROR: libflutter_elinux_wayland.so was not generated in $CMAKE_BUILD_DIR" >&2

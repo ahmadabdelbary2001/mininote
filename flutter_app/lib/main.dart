@@ -8,13 +8,20 @@ import 'screens/notes_list_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Allow both portrait and landscape on all platforms
-  await SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-    DeviceOrientation.landscapeLeft,
-    DeviceOrientation.landscapeRight,
-  ]);
+  // Allow both portrait and landscape on all platforms.
+  // The eLinux embedder does not implement the SystemChannels platform
+  // channels, so this call throws there; the window orientation is handled by
+  // Lomiri in that case.
+  try {
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  } catch (error) {
+    debugPrint('SystemChrome.setPreferredOrientations is not available: $error');
+  }
 
   Object? startupError;
 

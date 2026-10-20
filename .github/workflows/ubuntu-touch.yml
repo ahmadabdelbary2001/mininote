@@ -97,30 +97,37 @@ jobs:
           retention-days: 7
 
   # ─────────────────────────────────────────────────────────────
-  # 2. Build .click packages (arm64, amd64, armhf)
+  # 2. Build .click packages (amd64, arm64)
   # ─────────────────────────────────────────────────────────────
   build_click:
     name: Build Click (${{ matrix.arch }})
     needs: []
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    continue-on-error: ${{ matrix.arch == 'armhf' }}
+    runs-on: ${{ matrix.runner }}
+    # The release engine is built from source, which takes a while.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
         include:
-          - arch: arm64
-            rust_target: aarch64-unknown-linux-gnu
-            linker: aarch64-linux-gnu-gcc
-            target_env_var: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
           - arch: amd64
+            runner: ubuntu-24.04
             rust_target: x86_64-unknown-linux-gnu
             linker: gcc
             target_env_var: CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER
-          - arch: armhf
-            rust_target: armv7-unknown-linux-gnueabihf
-            linker: arm-linux-gnueabihf-gcc
-            target_env_var: CARGO_TARGET_ARMV7_UNKNOWN_LINUX_GNUEABIHF_LINKER
+          - arch: arm64
+            # Native ARM64 runner: no cross compilation needed for the
+            # engine, the embedder or the Rust binaries.
+            runner: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+            linker: gcc
+            target_env_var: CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER
+
+    env:
+      # One definition for both the restore and the save below: if the two
+      # keys ever drifted apart the cache would silently never hit.
+      # The key contains the Flutter version, because the engine revision is
+      # derived from it (bin/internal/engine.version).
+      ENGINE_CACHE_KEY: flutter-release-engine-${{ env.FLUTTER_VERSION }}-${{ matrix.arch }}-fontconfig
 
     steps:
       - name: Checkout
@@ -128,37 +135,37 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Install system dependencies & cross toolchains
+      - name: Free disk space
         run: |
+          # The release engine build needs a lot of room.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/share/boost \
+                      /opt/ghc /usr/local/.ghcup /usr/lib/jvm /opt/hostedtoolcache/CodeQL
+          df -h
+
+      - name: Install system dependencies
+        run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            clang cmake ninja-build pkg-config \
-            liblzma-dev file dpkg-dev pipx \
+            build-essential clang cmake ninja-build pkg-config patchelf \
+            libfontconfig1-dev liblzma-dev \
             libegl1-mesa-dev libgles2-mesa-dev libglib2.0-dev \
             libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev \
             libinput-dev libudev-dev wayland-protocols \
             libmaliit-glib-dev \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            gcc-arm-linux-gnueabihf g++-arm-linux-gnueabihf \
-            unzip curl
+            unzip curl file python3 git pipx
 
           # Ensure maliit-glib header paths are accessible for all include formats
           if [ -d "/usr/include/maliit-2/maliit-glib" ] && [ ! -d "/usr/include/maliit-glib" ]; then
             sudo ln -sf /usr/include/maliit-2/maliit-glib /usr/include/maliit-glib || true
           fi
 
-          # Configure multiarch and install arm64 target libraries for cross-compilation.
-          # IMPORTANT: Do NOT install 'click' before this step — multiarch apt-get may remove it.
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-            bash scripts/setup-arm64-cross.sh
-          fi
-
-          # Install 'click' AFTER multiarch setup to guarantee it is not removed by apt conflict resolution
+          # 'click' provides the click packaging tool.
           sudo apt-get install -y --no-install-recommends click
           command -v click || { echo "ERROR: 'click' command not found after installation" >&2; exit 1; }
           echo "  [OK] click available at: $(command -v click)"
 
-          # Install clickable via pipx (isolated venv, not affected by host APT multiarch changes)
+          # Install clickable via pipx (isolated venv)
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/bin:$PATH"
           if command -v pipx &>/dev/null; then
@@ -167,12 +174,11 @@ jobs:
             echo "WARNING: pipx not available; skipping clickable install" >&2
           fi
 
-
       # ── Flutter: manual install to guarantee version+architecture match ──
       # subosito/flutter-action fails to resolve flutter 3.41.7 for arm64
-      # host runners (which are always x86_64). We install Flutter from the
-      # official SDK tarball directly — this gives us the exact version and
-      # the correct host-arch gen_snapshot binary.
+      # host runners. We install Flutter from the official SDK tarball
+      # directly — this gives us the exact version and the correct host-arch
+      # toolchain.
       #
       # IMPORTANT: extract to $HOME (not /opt) so the runner user owns
       # all files. Flutter writes engine.stamp, cache/, etc. at runtime
@@ -187,14 +193,24 @@ jobs:
           # Extract as current user (no sudo) to a user-writable path
           tar -xf "/tmp/${FLUTTER_TAR}" -C "${HOME}" --no-same-owner
           rm -f "/tmp/${FLUTTER_TAR}"
+
+          # The published Linux tarball ships an x64 Dart SDK. On an ARM64
+          # runner it has to be re-downloaded for the host architecture,
+          # otherwise the flutter tool cannot run at all.
+          if [ "$(uname -m)" = "aarch64" ]; then
+            echo "ARM64 host detected: dropping the bundled x64 Dart SDK"
+            rm -rf "${HOME}/flutter/bin/cache/dart-sdk" \
+                   "${HOME}/flutter/bin/cache/engine-dart-sdk.stamp"
+          fi
+
           echo "${HOME}/flutter/bin" >> "$GITHUB_PATH"
 
-      - name: Flutter precache (Linux & cross-arch artifacts)
+      - name: Flutter precache (Linux)
         run: |
           set -euo pipefail
           # Ensure the cache directory is writable before Flutter touches it
           mkdir -p "${HOME}/flutter/bin/cache"
-          flutter precache --linux --android
+          flutter precache --linux
           flutter --version
 
       - name: Resolve Engine SHA & validate toolchain
@@ -208,13 +224,8 @@ jobs:
           echo "  Dart version:    $("${FLUTTER_ROOT}/bin/dart" --version 2>&1)"
           echo "  Engine SHA:      ${ENGINE_SHA}"
           echo "  Architecture:    ${{ matrix.arch }}"
+          echo "  Runner arch:     $(uname -m)"
           echo "══════════════════════════════════════════════════════"
-
-          # Verify gen_snapshot candidates for this arch
-          echo ""
-          echo "gen_snapshot candidates:"
-          find "${FLUTTER_ROOT}/bin/cache/artifacts/engine" -name "gen_snapshot" \
-              -exec sh -c 'echo "  $(file "$1") — $1"' _ {} \; 2>/dev/null || echo "  (none in cache yet)"
 
           # Verify frontend_server
           echo ""
@@ -230,7 +241,6 @@ jobs:
 
           echo ""
           echo "Engine SHA pinned: ${ENGINE_SHA}"
-          echo "libflutter_engine.so will be fetched from matching revision."
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -245,15 +255,67 @@ jobs:
             flutter_embedder -> target
             flutter_app/elinux/runner -> target
 
+      # ── Release Flutter engine ──────────────────────────────────────────
+      # The engine published on the Flutter CDN is a JIT/debug build that
+      # cannot load an AOT snapshot, so it is built from source here, in
+      # release mode, from the exact engine revision of the Flutter SDK.
+      #
+      # restore/save rather than actions/cache: that one only saves in its
+      # post step, which is skipped when the job fails, so a later failure
+      # would throw away a good engine build and make the next run redo the
+      # whole thing.
+      - name: Restore Flutter release engine cache
+        id: engine-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build/engine-artifacts/${{ matrix.arch }}
+          key: ${{ env.ENGINE_CACHE_KEY }}
+
+      - name: Build Flutter release engine
+        if: steps.engine-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          chmod +x scripts/*.sh
+          bash scripts/build-engine.sh "${{ matrix.arch }}"
+
+      # Placed right after the build so a failure further down the job (app
+      # build, packaging) still leaves the engine cached for the next run.
+      - name: Save Flutter release engine cache
+        if: steps.engine-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/engine-artifacts/${{ matrix.arch }}
+          key: ${{ env.ENGINE_CACHE_KEY }}
+
+      - name: Verify engine artifacts
+        run: |
+          set -euo pipefail
+          DIR="build/engine-artifacts/${{ matrix.arch }}"
+          echo "=== Engine artifacts for ${{ matrix.arch }} ==="
+          ls -lh "$DIR/"
+          file "$DIR/libflutter_engine.so"
+          file "$DIR/gen_snapshot"
+
+          # Assert the arches, so a restored-from-cache or mis-toolchained
+          # artifact fails here instead of deep in the app build. The engine
+          # is a target binary; gen_snapshot must run on this runner.
+          case ${{ matrix.arch }} in
+            amd64) ENGINE_ARCH="x86-64" ; HOST_ARCH="x86-64" ;;
+            arm64) ENGINE_ARCH="aarch64" ; HOST_ARCH="aarch64" ;;
+          esac
+          file -b "$DIR/libflutter_engine.so" | grep -q "$ENGINE_ARCH" || {
+            echo "ERROR: libflutter_engine.so is not $ENGINE_ARCH" >&2; exit 1; }
+          file -b "$DIR/gen_snapshot" | grep -q "$HOST_ARCH" || {
+            echo "ERROR: gen_snapshot is not runnable on this $HOST_ARCH host" >&2; exit 1; }
+          echo "OK: engine is $ENGINE_ARCH, gen_snapshot is host ($HOST_ARCH)"
+
       # ── Unit tests: Rust (host only) + Flutter ──────────────────────────
-      # Rust cross-compilation tests require a cross-runner; we only run
-      # `cargo check` for the cross targets (not `cargo test`) to keep CI fast.
       - name: Run Unit Tests (Rust host + Flutter)
         run: |
           set -euo pipefail
           # Native Rust tests (host arch, always safe)
           cargo test --manifest-path native_core/Cargo.toml
-          # Syntax/type-check the cross-target crates without running them
+          # Syntax/type-check the target crate
           cargo check \
             --manifest-path flutter_embedder/Cargo.toml \
             --target ${{ matrix.rust_target }}
@@ -278,7 +340,6 @@ jobs:
           bash scripts/build-app.sh "${{ matrix.arch }}"
 
       - name: Validate Click package
-        if: matrix.arch != 'armhf'
         run: |
           set -euo pipefail
           CLICK_FILE="$(find dist -name "*.click" | head -1)"
@@ -302,7 +363,6 @@ jobs:
           name: mininotes-ubuntu-touch-${{ matrix.arch }}-click
           path: |
             dist/*.click
-            dist/armhf-skipped.txt
           if-no-files-found: warn
           retention-days: 30
 

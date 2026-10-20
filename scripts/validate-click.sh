@@ -173,12 +173,37 @@ if command -v readelf >/dev/null 2>&1; then
     echo "  [OK] libapp.so AOT architecture verified: $LIBAPP_MACHINE"
 fi
 
+# 4b. The AOT snapshot must be a product-mode build, otherwise the release
+# engine aborts while loading it on the device.
+if command -v python3 >/dev/null 2>&1; then
+    python3 "$(dirname "$(readlink -f "$0")")/check-aot-features.py" \
+        "$BUNDLE_DIR/lib/libapp.so" "$EXPECTED_ARCH"
+else
+    echo "ERROR: python3 is required to validate the AOT snapshot features." >&2
+    exit 1
+fi
+
 # 5. Check RPATH/RUNPATH and verify NO desktop GTK3 dependencies
 if command -v readelf >/dev/null 2>&1; then
     echo "Verifying RPATH/RUNPATH and dependencies on mininote executable..."
     if ! readelf -d "$BUNDLE_DIR/mininote" | grep -qi -E "(RPATH|RUNPATH)"; then
         echo "  [INFO] mininote has no explicit RPATH/RUNPATH; mininote-wrapper supplies LD_LIBRARY_PATH"
     fi
+
+    # The shared libraries live next to each other in lib/, so they must be
+    # able to resolve their siblings through an $ORIGIN RPATH.  Without it the
+    # embedder cannot find libflutter_engine.so unless LD_LIBRARY_PATH is set.
+    for lib in "lib/libflutter_elinux_wayland.so" "lib/libflutter_engine.so"; do
+        elf="$BUNDLE_DIR/$lib"
+        if [ -f "$elf" ]; then
+            if ! readelf -d "$elf" | grep -qi -E "(RPATH|RUNPATH).*\\\$ORIGIN"; then
+                echo "CRITICAL ERROR: $lib has no \$ORIGIN RPATH/RUNPATH!" >&2
+                echo "               The dynamic loader would not find its sibling libraries." >&2
+                exit 1
+            fi
+            echo "  [OK] $lib resolves its siblings via \$ORIGIN"
+        fi
+    done
 
     # Ensure no desktop GTK3 or X11 dependencies leaked into our pure Wayland eLinux runner
     for elf in "$BUNDLE_DIR/mininote" "$BUNDLE_DIR/lib/libflutter_elinux_wayland.so"; do

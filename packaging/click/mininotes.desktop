@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=MiniNote
-Comment=MiniNote — Fast offline notes powered by Flutter + Rust
+Comment=MiniNote - Fast offline notes powered by Flutter + Rust
 Exec=mininote-wrapper %U
 Icon=assets/icons/mininotes.svg
 Terminal=false

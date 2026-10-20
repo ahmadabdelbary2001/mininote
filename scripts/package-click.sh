@@ -121,11 +121,29 @@ cp "$NATIVE_CORE_SO" "$BUNDLE_DIR/lib/libnative_core.so"
 
 # 4. Copy flutter engine and embedder shared libraries
 ENGINE_DIR="$ROOT_DIR/build/engine-artifacts/${ARCH}"
-if [ -f "$ENGINE_DIR/libflutter_engine.so" ]; then
-    cp "$ENGINE_DIR/libflutter_engine.so" "$BUNDLE_DIR/lib/libflutter_engine.so"
+if [ ! -f "$ENGINE_DIR/libflutter_engine.so" ]; then
+    echo "ERROR: libflutter_engine.so not found in $ENGINE_DIR" >&2
+    echo "       The release engine must be built before packaging." >&2
+    exit 1
 fi
-if [ -f "$ENGINE_DIR/libflutter_elinux_wayland.so" ]; then
-    cp "$ENGINE_DIR/libflutter_elinux_wayland.so" "$BUNDLE_DIR/lib/libflutter_elinux_wayland.so"
+cp "$ENGINE_DIR/libflutter_engine.so" "$BUNDLE_DIR/lib/libflutter_engine.so"
+
+if [ ! -f "$ENGINE_DIR/libflutter_elinux_wayland.so" ]; then
+    echo "ERROR: libflutter_elinux_wayland.so not found in $ENGINE_DIR" >&2
+    exit 1
+fi
+cp "$ENGINE_DIR/libflutter_elinux_wayland.so" "$BUNDLE_DIR/lib/libflutter_elinux_wayland.so"
+
+# The shared libraries live next to each other in lib/ and must be able to
+# resolve their siblings through an $ORIGIN RPATH.
+if command -v patchelf >/dev/null 2>&1; then
+    for so_file in "$BUNDLE_DIR/lib/"*.so; do
+        [ -f "$so_file" ] || continue
+        if ! readelf -d "$so_file" 2>/dev/null | grep -q '\$ORIGIN'; then
+            echo "  Setting \$ORIGIN RPATH on $(basename "$so_file")"
+            patchelf --set-rpath '$ORIGIN' "$so_file" || true
+        fi
+    done
 fi
 
 # 5. Copy wrapper script, apparmor, desktop file, icon, and manifest
