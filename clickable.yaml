@@ -1,7 +1,7 @@
 clickable_minimum_required: 8.8.0
 builder: custom
 kill: mininote
-framework: ubuntu-sdk-20.04
+framework: ubuntu-touch-24.04-1.x
 
 dependencies_host:
   - python3
@@ -10,6 +10,8 @@ dependencies_host:
   - cmake
   - build-essential
   - clang
+  - llvm
+  - lld
   - ninja-build
   - pkg-config
   - zip

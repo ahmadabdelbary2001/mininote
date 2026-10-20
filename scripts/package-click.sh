@@ -134,6 +134,41 @@ if [ ! -f "$ENGINE_DIR/libflutter_elinux_wayland.so" ]; then
 fi
 cp "$ENGINE_DIR/libflutter_elinux_wayland.so" "$BUNDLE_DIR/lib/libflutter_elinux_wayland.so"
 
+# 4b. Bundle maliit-glib when available.
+# The eLinux Wayland embedder links against maliit-glib for the on-screen
+# keyboard.  Ubuntu Touch images that ship maliit-keyboard normally provide
+# it, but not every image does, and a missing libmaliit-glib.so.2 makes the
+# dynamic loader reject libflutter_elinux_wayland.so before main() runs.
+# FluffyChat's click packaging bundles the same library for this reason.
+MALIIT_LIB=""
+for candidate in /usr/lib/*/libmaliit-glib.so.2 /usr/lib/libmaliit-glib.so.2; do
+    if [ -e "$candidate" ]; then
+        MALIIT_LIB="$candidate"
+        break
+    fi
+done
+if [ -z "$MALIIT_LIB" ]; then
+    MALIIT_LIB="$(find /usr/lib -maxdepth 2 -name 'libmaliit-glib.so.*' 2>/dev/null | sort | head -1 || true)"
+fi
+if [ -n "$MALIIT_LIB" ]; then
+    case "$ARCH" in
+        amd64) LIB_ARCH_PATTERN="x86-64" ;;
+        arm64) LIB_ARCH_PATTERN="aarch64" ;;
+        armhf) LIB_ARCH_PATTERN="ARM" ;;
+        *)     LIB_ARCH_PATTERN="" ;;
+    esac
+    if [ -z "$LIB_ARCH_PATTERN" ] || file -b "$MALIIT_LIB" | grep -q "$LIB_ARCH_PATTERN"; then
+        # Install under the SONAME the embedder was linked against.
+        cp -a "$MALIIT_LIB" "$BUNDLE_DIR/lib/libmaliit-glib.so.2"
+        echo "Bundled libmaliit-glib.so.2 (maliit on-screen keyboard)"
+    else
+        echo "WARNING: $MALIIT_LIB is not $LIB_ARCH_PATTERN; not bundling it." >&2
+    fi
+else
+    echo "WARNING: libmaliit-glib.so.2 not found on this host;" >&2
+    echo "         the device rootfs must provide it for the on-screen keyboard." >&2
+fi
+
 # The shared libraries live next to each other in lib/ and must be able to
 # resolve their siblings through an $ORIGIN RPATH.
 if command -v patchelf >/dev/null 2>&1; then

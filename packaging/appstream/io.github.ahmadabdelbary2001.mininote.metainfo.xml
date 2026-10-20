@@ -43,6 +43,14 @@
     <content_rating type="oars-1.1"/>
 
     <releases>
+        <release version="1.0.6" date="2026-10-21">
+            <description>
+                <p>
+                    Fixed the Ubuntu Touch AOT build by targeting the Linux Flutter platform for the asset bundle, and completed the
+                    eLinux integration: maliit on-screen keyboard runtime support, Lomiri desktop metadata and a 24.04 Click framework.
+                </p>
+            </description>
+        </release>
         <release version="1.0.5" date="2026-09-22">
             <description>
                 <p>

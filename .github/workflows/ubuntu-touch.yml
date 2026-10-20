@@ -149,7 +149,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential clang cmake ninja-build pkg-config patchelf \
+            build-essential clang llvm lld cmake ninja-build pkg-config patchelf \
             libfontconfig1-dev liblzma-dev \
             libegl1-mesa-dev libgles2-mesa-dev libglib2.0-dev \
             libwayland-dev libxkbcommon-dev libdrm-dev libgbm-dev \

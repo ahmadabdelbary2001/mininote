@@ -3,7 +3,7 @@
 # build-app.sh — MiniNotes Ubuntu Touch build pipeline
 # =============================================================================
 # AOT Pipeline (correct order):
-#   1. flutter build bundle --asset-dir=...  → flutter_assets/ (no kernel)
+#   1. flutter build bundle --target-platform linux-*  → flutter_assets/ (no kernel)
 #   2. dart frontend_server.dart.snapshot    → app.dill (true AOT kernel)
 #   3. gen_snapshot (arch-specific)         → libapp.so (AOT ELF)
 #   4. Assemble bundle + Click
@@ -24,12 +24,14 @@ echo "=== Building MiniNotes for Ubuntu Touch (${ARCH}) ==="
 case "$ARCH" in
     amd64)
         RUST_TARGET="x86_64-unknown-linux-gnu"
+        FLUTTER_TARGET_PLATFORM="linux-x64"
         LINKER="gcc"
         ELF_ARCH_PATTERN="x86-64"
         ELF_MACHINE_PATTERN="Advanced Micro Devices X86-64"
         ;;
     arm64)
         RUST_TARGET="aarch64-unknown-linux-gnu"
+        FLUTTER_TARGET_PLATFORM="linux-arm64"
         # Native ARM64 runners have no cross compiler installed; the regular
         # gcc already targets aarch64 there.  Fall back to it when the cross
         # toolchain is not present.
@@ -71,7 +73,7 @@ ENGINE_SHA="$(tr -d '[:space:]' < "$ENGINE_STAMP")"
 
 echo ""
 echo "══════════════════════════════════════════════════════════"
-echo "  Flutter SDK:    $(flutter --version --machine 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('frameworkVersion','?'))" 2>/dev/null || flutter --version 2>&1 | head -1)"
+echo "  Flutter SDK:    $(flutter --no-version-check --version --machine 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('frameworkVersion','?'))" 2>/dev/null || flutter --no-version-check --version 2>&1 | head -1)"
 echo "  Engine SHA:     $ENGINE_SHA"
 echo "  Flutter root:   $FLUTTER_ROOT"
 echo "  Target arch:    $ARCH"
@@ -117,8 +119,21 @@ build_flutter_bundle() {
 
     (
         cd "$FLUTTER_APP"
-        flutter pub get
-        flutter build bundle
+        # --no-version-check: the Flutter tool otherwise performs a git/SSH
+        # version check against github.com on every invocation, which can hang
+        # in constrained CI networks.
+        flutter --no-version-check pub get
+
+        # Build the asset bundle for the *Linux* target we are actually
+        # packaging.  `flutter build bundle` defaults to `android-arm`, which
+        # makes the native-assets step look for an Android NDK/SDK and abort
+        # with "Android SDK could not be found" on runners that only build
+        # Linux.  Targeting Linux keeps the hook step on the host toolchain
+        # (clang) instead.  Note: native assets must stay enabled — disabling
+        # them while any dependency ships a build hook is a tool exit too.
+        flutter --no-version-check build bundle \
+            --target-platform "$FLUTTER_TARGET_PLATFORM" \
+            --no-pub
     )
 
     # Copy assets to our bundle directory

@@ -489,11 +489,21 @@ bash scripts/build-app.sh arm64
 The AOT pipeline is:
 
 ```text
-flutter build bundle            → flutter_assets/ (no JIT kernel)
-frontend_server (AOT)           → app.dill (true AOT kernel)
-gen_snapshot (release engine)   → libapp.so (AOT ELF, product mode)
-assemble + validate + click     → mininotes_<version>_<arch>.click
+flutter build bundle --target-platform linux-<arch>   → flutter_assets/ (no JIT kernel)
+frontend_server (AOT)                                  → app.dill (true AOT kernel)
+gen_snapshot (release engine)                          → libapp.so (AOT ELF, product mode)
+assemble + validate + click                            → mininotes_<version>_<arch>.click
 ```
+
+The bundle is deliberately built for the Linux target
+(`linux-x64` on amd64, `linux-arm64` on arm64) rather than the
+`android-arm` default of `flutter build bundle`. The default makes Flutter's
+Dart build hooks look for an Android NDK/SDK, which is not installed on the
+Ubuntu Touch runners and aborts with
+`Target dart_build failed: Error: Android SDK could not be found.` Targeting
+Linux keeps the hook step on the host LLVM toolchain. The `llvm` and `lld`
+packages are part of `dependencies_host` because Flutter's Linux hook
+configuration expects `llvm-ar` and `ld.lld` next to `clang++`.
 
 `scripts/check-aot-features.py` verifies that `libapp.so` really is a
 product-mode snapshot for the target architecture; a snapshot that carries
@@ -518,32 +528,30 @@ Clickable can also be installed through its documented Ubuntu/PPA or Snap instal
 clickable devices
 ```
 
-### Build for Ubuntu Touch ARM64
+### Build the Click package
+
+The eLinux package is not produced by Clickable's default builders: it needs
+the release engine, the Rust runner and the AOT snapshot. Run the pipeline
+directly:
 
 ```bash
-clickable build --arch arm64
+bash scripts/build-app.sh arm64   # or amd64
 ```
 
-### Build for ARMHF
+The result is `dist/mininotes_<version>_<arch>.click`. `clickable.yaml` is
+used for device deployment and review; it uses a custom builder and does not
+drive the eLinux/AOT pipeline, so run `build-app.sh` first and install the
+resulting `.click` directly.
 
-```bash
-clickable build --arch armhf
-```
-
-### Build for AMD64
-
-```bash
-clickable build --arch amd64
-```
-
-Clickable places the resulting `.click` package in the architecture-specific build directory and automatically runs the package review after a build.
+ARMHF is not supported: Flutter stopped publishing arm32 engine artifacts, so
+`build-app.sh armhf` exits early.
 
 ### Install on a connected device
 
 For an ARM64 Ubuntu Touch device:
 
 ```bash
-clickable install --arch arm64
+clickable install dist/mininotes_1.0.6_arm64.click
 ```
 
 Launch the application:

@@ -6,5 +6,6 @@ Icon=assets/icons/mininotes.svg
 Terminal=false
 Type=Application
 X-Ubuntu-Touch=true
+X-Lomiri-Touch=true
 X-Ubuntu-XMir-Enable=false
 X-Ubuntu-Supported-Orientations=primary-portrait;portrait-inverted;landscape-primary;landscape-secondary
