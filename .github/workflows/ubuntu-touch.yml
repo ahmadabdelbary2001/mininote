@@ -196,15 +196,21 @@ jobs:
           tar -xf "/tmp/${FLUTTER_TAR}" -C "${HOME}" --no-same-owner
           rm -f "/tmp/${FLUTTER_TAR}"
 
-          # The published Linux tarball ships an x64 Dart SDK. On an ARM64
-          # runner it has to be replaced by the ARM64 one, otherwise the
-          # flutter tool cannot run at all.  Removing the SDK alone is not
-          # enough: the tool only downloads a new Dart SDK while it rebuilds
-          # itself, so the download is triggered explicitly.
+          # The published Linux tarball ships an x64 Dart SDK and an x64
+          # flutter_tools snapshot.  On an ARM64 runner both have to be
+          # replaced by their ARM64 counterparts, otherwise the flutter tool
+          # aborts with "Snapshot not compatible with the current VM
+          # configuration" (the snapshot says x64, the VM says arm64).
+          #
+          # Removing the Dart SDK alone is not enough: the SDK is only
+          # refreshed while the flutter tool rebuilds itself, so the download
+          # is triggered explicitly and the tool snapshot is invalidated.
           if [ "$(uname -m)" = "aarch64" ]; then
-            echo "ARM64 host detected: replacing the bundled x64 Dart SDK"
+            echo "ARM64 host detected: replacing the bundled x64 toolchain"
             rm -rf "${HOME}/flutter/bin/cache/dart-sdk" \
-                   "${HOME}/flutter/bin/cache/engine-dart-sdk.stamp"
+                   "${HOME}/flutter/bin/cache/engine-dart-sdk.stamp" \
+                   "${HOME}/flutter/bin/cache/flutter_tools.snapshot" \
+                   "${HOME}/flutter/bin/cache/flutter_tools.stamp"
             # update_dart_sdk.sh reads the engine stamp from the cache.
             if [ ! -f "${HOME}/flutter/bin/cache/engine.stamp" ]; then
               cp "${HOME}/flutter/bin/internal/engine.version" \
