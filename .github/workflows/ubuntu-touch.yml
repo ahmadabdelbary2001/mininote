@@ -126,8 +126,10 @@ jobs:
       # One definition for both the restore and the save below: if the two
       # keys ever drifted apart the cache would silently never hit.
       # The key contains the Flutter version, because the engine revision is
-      # derived from it (bin/internal/engine.version).
-      ENGINE_CACHE_KEY: flutter-release-engine-${{ env.FLUTTER_VERSION }}-${{ matrix.arch }}-fontconfig
+      # derived from it (bin/internal/engine.version).  The `env` context is
+      # not available in a job level `env` block, so the version is spelled
+      # out here and has to match FLUTTER_VERSION above.
+      ENGINE_CACHE_KEY: flutter-release-engine-3.41.7-${{ matrix.arch }}-fontconfig
 
     steps:
       - name: Checkout
