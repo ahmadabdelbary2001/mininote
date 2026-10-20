@@ -45,12 +45,16 @@ def main() -> int:
     with open(path, "rb") as handle:
         data = handle.read()
 
-    # The features string is one contiguous run of printable ASCII.
+    # The features string is one contiguous run of printable ASCII.  It is not
+    # necessarily surrounded by NUL bytes, so look for it inside every
+    # printable run instead of requiring the run to start with it.
+    features_re = re.compile(
+        rb"(?:product|release|debug) [a-z0-9_]+(?:[ -][a-z0-9_.+-]+)*"
+    )
     candidates = []
     for run in re.findall(rb"[\x20-\x7e]{16,}", data):
-        text = run.decode("ascii")
-        if text.startswith(("product ", "release ", "debug ")):
-            candidates.append(text)
+        for match in features_re.finditer(run):
+            candidates.append(match.group().decode("ascii"))
 
     if not candidates:
         print(

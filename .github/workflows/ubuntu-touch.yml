@@ -197,12 +197,27 @@ jobs:
           rm -f "/tmp/${FLUTTER_TAR}"
 
           # The published Linux tarball ships an x64 Dart SDK. On an ARM64
-          # runner it has to be re-downloaded for the host architecture,
-          # otherwise the flutter tool cannot run at all.
+          # runner it has to be replaced by the ARM64 one, otherwise the
+          # flutter tool cannot run at all.  Removing the SDK alone is not
+          # enough: the tool only downloads a new Dart SDK while it rebuilds
+          # itself, so the download is triggered explicitly.
           if [ "$(uname -m)" = "aarch64" ]; then
-            echo "ARM64 host detected: dropping the bundled x64 Dart SDK"
+            echo "ARM64 host detected: replacing the bundled x64 Dart SDK"
             rm -rf "${HOME}/flutter/bin/cache/dart-sdk" \
                    "${HOME}/flutter/bin/cache/engine-dart-sdk.stamp"
+            # update_dart_sdk.sh reads the engine stamp from the cache.
+            if [ ! -f "${HOME}/flutter/bin/cache/engine.stamp" ]; then
+              cp "${HOME}/flutter/bin/internal/engine.version" \
+                 "${HOME}/flutter/bin/cache/engine.stamp"
+            fi
+            [ -f "${HOME}/flutter/bin/cache/engine.realm" ] || \
+              : > "${HOME}/flutter/bin/cache/engine.realm"
+            "${HOME}/flutter/bin/internal/update_dart_sdk.sh"
+            test -x "${HOME}/flutter/bin/cache/dart-sdk/bin/dart" || {
+              echo "ERROR: the ARM64 Dart SDK could not be downloaded." >&2
+              exit 1
+            }
+            "${HOME}/flutter/bin/cache/dart-sdk/bin/dart" --version
           fi
 
           echo "${HOME}/flutter/bin" >> "$GITHUB_PATH"

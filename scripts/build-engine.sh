@@ -145,6 +145,9 @@ if [ ! -d "$ENGINE_SRC/.git" ]; then
     rm -rf "$ENGINE_SRC"
     mkdir -p "$ENGINE_SRC"
     git init -q "$ENGINE_SRC"
+fi
+
+if ! git -C "$ENGINE_SRC" remote get-url origin >/dev/null 2>&1; then
     git -C "$ENGINE_SRC" remote add origin https://github.com/flutter/flutter.git
 fi
 
@@ -219,7 +222,7 @@ echo "── Syncing engine dependencies (gclient) ─────────�
 echo ""
 echo "── Configuring GN (release mode) ────────────────────────────────────"
 cd "$ENGINE_SRC/engine/src/flutter"
-python3 tools/gn \
+/usr/bin/python3 tools/gn \
     --runtime-mode=release \
     --no-goma \
     --enable-fontconfig \
