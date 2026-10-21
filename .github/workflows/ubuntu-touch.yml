@@ -19,6 +19,12 @@ permissions:
 env:
   FLUTTER_VERSION: "3.41.7"
   CLICKABLE_VERSION: "8.10.0"
+  # GitHub's ubuntu-24.04 image ships podman, which Clickable prefers over
+  # docker.  Clickable's podman id-mapping only maps container UIDs 0..1000,
+  # so unpacking the Ubuntu Touch image (which contains the "phablet" user,
+  # UID 32011) fails with "container ID 32011 cannot be mapped to a host ID".
+  # Force Docker for the click-review container.
+  CLICKABLE_DOCKER_COMMAND: docker
 
 jobs:
   # ─────────────────────────────────────────────────────────────

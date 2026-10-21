@@ -157,9 +157,13 @@ if [ -n "$MALIIT_LIB" ]; then
         armhf) LIB_ARCH_PATTERN="ARM" ;;
         *)     LIB_ARCH_PATTERN="" ;;
     esac
-    if [ -z "$LIB_ARCH_PATTERN" ] || file -b "$MALIIT_LIB" | grep -q "$LIB_ARCH_PATTERN"; then
+    # The runtime package installs libmaliit-glib.so.2 as a symlink to the
+    # versioned library.  Resolve it and copy the real object (cp -L), not the
+    # symlink, otherwise the click would contain a dangling link.
+    MALIIT_LIB="$(readlink -f "$MALIIT_LIB" 2>/dev/null || echo "$MALIIT_LIB")"
+    if [ -z "$LIB_ARCH_PATTERN" ] || file -L -b "$MALIIT_LIB" | grep -q "$LIB_ARCH_PATTERN"; then
         # Install under the SONAME the embedder was linked against.
-        cp -a "$MALIIT_LIB" "$BUNDLE_DIR/lib/libmaliit-glib.so.2"
+        cp -L "$MALIIT_LIB" "$BUNDLE_DIR/lib/libmaliit-glib.so.2"
         echo "Bundled libmaliit-glib.so.2 (maliit on-screen keyboard)"
     else
         echo "WARNING: $MALIIT_LIB is not $LIB_ARCH_PATTERN; not bundling it." >&2
