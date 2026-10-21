@@ -10,17 +10,21 @@ set -e
 case "${0}" in
     /*)  HERE="${0%/*}" ;;
     */*) HERE="${PWD}/${0%/*}" ;;
-    *)   HERE="${PWD}" ;;
+    *)
+        # Invoked by name (the normal click-launch case): find the click root
+        # in PATH.  This avoids relying on the desktop file's Path= key and
+        # uses only shell builtins.
+        HERE=""
+        IFS=: read -r -a _path_dirs <<< "${PATH}"
+        for _dir in "${_path_dirs[@]}"; do
+            if [ -f "${_dir}/mininote" ] && [ -d "${_dir}/lib" ]; then
+                HERE="${_dir}"
+                break
+            fi
+        done
+        [ -n "${HERE}" ] || HERE="${PWD}"
+        ;;
 esac
-
-# If the launcher did not honour the desktop file's Path= key, fall back to
-# the per-user click root before giving up.
-if [ ! -d "${HERE}/lib" ] && [ -n "${APP_ID:-}" ]; then
-    CLICK_ROOT="/opt/click.ubuntu.com/.click/users/@all/${APP_ID%%_*}"
-    if [ -d "${CLICK_ROOT}/lib" ]; then
-        HERE="${CLICK_ROOT}"
-    fi
-fi
 
 # ---------------------------------------------------------------- libraries --
 export LD_LIBRARY_PATH="${HERE}/lib:${HERE}:${LD_LIBRARY_PATH:-}"
