@@ -23,13 +23,18 @@ fn setup_confined_xdg_dirs() {
 
     let data_home = format!("{}/.local/share/{}", home, package);
     let cache_home = format!("{}/.cache/{}", home, package);
+    let tmp_home = format!("{}/tmp", cache_home);
 
+    // The launch wrapper cannot call mkdir(1) under the click AppArmor
+    // profile, so create the writable directories here instead.
     let _ = std::fs::create_dir_all(&data_home);
     let _ = std::fs::create_dir_all(&cache_home);
+    let _ = std::fs::create_dir_all(&tmp_home);
 
     unsafe {
         env::set_var("XDG_DATA_HOME", data_home);
         env::set_var("XDG_CACHE_HOME", cache_home);
+        env::set_var("TMPDIR", tmp_home);
     }
 }
 

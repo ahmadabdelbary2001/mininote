@@ -3,7 +3,24 @@
 # Sets up the confined environment (Wayland, XDG dirs, library paths)
 # then execs the Rust runner binary.
 set -e
-HERE="$(dirname "$(readlink -f "${0}")")"
+
+# Resolve the click root using only shell builtins.  Under the click AppArmor
+# profile, executing helper binaries such as readlink(1), dirname(1) or
+# mkdir(1) is denied, so the wrapper must not call them.
+case "${0}" in
+    /*)  HERE="${0%/*}" ;;
+    */*) HERE="${PWD}/${0%/*}" ;;
+    *)   HERE="${PWD}" ;;
+esac
+
+# If the launcher did not honour the desktop file's Path= key, fall back to
+# the per-user click root before giving up.
+if [ ! -d "${HERE}/lib" ] && [ -n "${APP_ID:-}" ]; then
+    CLICK_ROOT="/opt/click.ubuntu.com/.click/users/@all/${APP_ID%%_*}"
+    if [ -d "${CLICK_ROOT}/lib" ]; then
+        HERE="${CLICK_ROOT}"
+    fi
+fi
 
 # ---------------------------------------------------------------- libraries --
 export LD_LIBRARY_PATH="${HERE}/lib:${HERE}:${LD_LIBRARY_PATH:-}"
@@ -31,10 +48,14 @@ fi
 
 export XDG_DATA_HOME="${HOME}/.local/share/${PKG_NAME}"
 export XDG_CACHE_HOME="${HOME}/.cache/${PKG_NAME}"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-export TMPDIR="${XDG_CACHE_HOME}/tmp"
+# UID is a bash builtin; id(1) is not executable under the click profile.
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${UID}}"
+# TMPDIR must be an existing writable directory.  Use the cache directory
+# itself (the runner may refine this to <cache>/tmp and create it).
+export TMPDIR="${XDG_CACHE_HOME}"
 export XDG_DATA_DIRS="${HERE}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-mkdir -p "${XDG_DATA_HOME}" "${XDG_CACHE_HOME}" "${TMPDIR}"
+# The directories are created by the Rust runner (std::fs::create_dir_all)
+# because mkdir(1) is denied by the AppArmor policy.
 
 # ---------------------------------------------------- Wayland display detect --
 if [ -z "${WAYLAND_DISPLAY:-}" ]; then
